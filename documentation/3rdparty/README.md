@@ -29,6 +29,7 @@ This README file contains an index of all files in the documentation directory.
 - [SMA CAN protocol.pdf](protocols/SMA%20CAN%20protocol.pdf)
 - [Sol-Ark ModBus V1.1.pdf](protocols/Sol-Ark%20ModBus%20V1.1.pdf)
 - [SRNE_MODBUS_v3.9.pdf](protocols/SRNE_MODBUS_v3.9.pdf)
+- [SRNE.Solar.Charge.Inverter.MODBUS.Protocol1.96.pdf](protocols/SRNE.Solar.Charge.Inverter.MODBUS.Protocol1.96.pdf)
 - [Victron VE-Bus-products-MK2-Protocol-3-14.pdf](protocols/Victron%20VE-Bus-products-MK2-Protocol-3-14.pdf)
 - [Victron-CCGX-Modbus-TCP-register-list-3.30.xlsx](protocols/Victron-CCGX-Modbus-TCP-register-list-3.30.xlsx)
 
