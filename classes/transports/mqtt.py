@@ -24,6 +24,7 @@ class mqtt(transport_base):
     base_topic : str = "home/device"
     error_topic : str = "/error"
     discovery_topic : str = "homeassistant"
+    availability_topic : str
     discovery_enabled : bool = False
     json : bool = False
     reconnect_delay : int = 7
@@ -108,7 +109,7 @@ class mqtt(transport_base):
     def exit_handler(self):
         '''on exit handler'''
         self._log.warning("MQTT Exiting...")
-        self.client.publish( self.base_topic + "/" + self.device_identifier + "/availability","offline")
+        self.client.publish(self.availability_topic,"offline",retain=True)
         return
 
     def mqtt_reconnect(self):
@@ -161,7 +162,7 @@ class mqtt(transport_base):
         self._log.info(f"write data from [{from_transport.transport_name}] to mqtt transport")
         self._log.info(data)
         #have to send this every loop, because mqtt doesnt disconnect when HA restarts. HA bug.
-        info = self.client.publish(self.base_topic + "/" + from_transport.device_identifier + "/availability","online", qos=0,retain=True)
+        info = self.client.publish(self.availability_topic,"online", qos=0,retain=True)
         if info.rc == MQTT_ERR_NO_CONN:
             self.connected = False
 
@@ -204,8 +205,10 @@ class mqtt(transport_base):
     def mqtt_discovery(self, from_transport : transport_base):
         self._log.info("Publishing HA Discovery Topics...")
 
+        self.availability_topic = self.base_topic + "/" + from_transport.device_identifier + "/availability"
+
         disc_payload = {}
-        disc_payload["availability_topic"] = self.base_topic + "/" + from_transport.device_identifier + "/availability"
+        disc_payload["availability_topic"] = self.availability_topic
 
         device = {}
         device["manufacturer"] = from_transport.device_manufacturer
