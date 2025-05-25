@@ -247,7 +247,7 @@ class mqtt(transport_base):
             disc_payload = {}
             disc_payload["availability_topic"] = self.base_topic + "/" + from_transport.device_identifier + "/availability"
             disc_payload["device"] = device
-            disc_payload["name"] = clean_name
+            disc_payload["name"] = item.display_name
             disc_payload["unique_id"] = "hotnoob_" + from_transport.device_serial_number + "_"+clean_name
 
             writePrefix = ""
