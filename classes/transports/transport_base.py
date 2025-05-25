@@ -125,6 +125,8 @@ class transport_base:
 
     def update_identifier(self):
         self.device_identifier = self.device_serial_number.strip().lower()
+        if self.device_name[-1] == "_": # Device name is missing serial number
+            self.device_name = self.device_name + self.device_serial_number
 
     def init_bridge(self, from_transport : "transport_base"):
         pass
