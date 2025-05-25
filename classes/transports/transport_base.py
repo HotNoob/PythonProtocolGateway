@@ -94,6 +94,7 @@ class transport_base:
 
         if settings:
             self.device_serial_number = settings.get(["device_serial_number", "serial_number"], self.device_serial_number)
+            self.device_model = settings.get(["device_model", "model"], self.device_model)
             self.device_manufacturer = settings.get(["device_manufacturer", "manufacturer"], self.device_manufacturer)
             self.device_name = settings.get(["device_name", "name"], fallback=self.device_manufacturer+"_"+self.device_serial_number)
             self.bridge = settings.get("bridge", self.bridge)
