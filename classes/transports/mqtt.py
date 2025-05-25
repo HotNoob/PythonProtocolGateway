@@ -214,7 +214,7 @@ class mqtt(transport_base):
         device["manufacturer"] = from_transport.device_manufacturer
         device["model"] = from_transport.device_model
         device["identifiers"] = "hotnoob_" + from_transport.device_model + "_" + from_transport.device_serial_number
-        device["name"] = from_transport.device_name
+        device["name"] = from_transport.device_name.replace("_", " ").strip()
 
         registry_map : list[registry_map_entry] = []
         for entries in from_transport.protocolSettings.registry_map.values():
