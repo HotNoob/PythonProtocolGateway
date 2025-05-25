@@ -232,8 +232,9 @@ class mqtt(transport_base):
                 continue
 
 
-            clean_name = item.variable_name.lower().replace(" ", "_").strip()
-            if not clean_name: #if name is empty, skip
+            clean_name = item.variable_name
+            if not clean_name: #if name is empty, skip^
+                self._log.warning(f"Skipping empty name for item: {item.register}")
                 continue
 
             if False:
@@ -262,8 +263,7 @@ class mqtt(transport_base):
             if item.unit:
                 disc_payload["unit_of_measurement"] = item.unit
 
-
-            discovery_topic = self.discovery_topic+"/sensor/HN-" + from_transport.device_serial_number  + writePrefix + "/" + disc_payload["name"].replace(" ", "_") + "/config"
+            discovery_topic = self.discovery_topic+"/sensor/HN-" + from_transport.device_serial_number  + writePrefix + "/" + clean_name + "/config"
 
             self.client.publish(discovery_topic,
                                        json.dumps(disc_payload),qos=1, retain=True)
