@@ -94,6 +94,7 @@ class transport_base:
 
         if settings:
             self.device_serial_number = settings.get(["device_serial_number", "serial_number"], self.device_serial_number)
+            self.device_model = settings.get(["device_model", "model"], self.device_model)
             self.device_manufacturer = settings.get(["device_manufacturer", "manufacturer"], self.device_manufacturer)
             self.device_name = settings.get(["device_name", "name"], fallback=self.device_manufacturer+"_"+self.device_serial_number)
             self.bridge = settings.get("bridge", self.bridge)
@@ -124,6 +125,8 @@ class transport_base:
 
     def update_identifier(self):
         self.device_identifier = self.device_serial_number.strip().lower()
+        if self.device_name[-1] == "_": # Device name is missing serial number
+            self.device_name = self.device_name + self.device_serial_number
 
     def init_bridge(self, from_transport : "transport_base"):
         pass
