@@ -189,6 +189,7 @@ class registry_map_entry:
     register_byte : int
     ''' byte offset for canbus ect... '''
     variable_name : str
+    display_name : str
     documented_name : str
     unit : str
     unit_mod : float
@@ -500,14 +501,14 @@ class protocol_settings:
             #endregion unit
 
 
-            variable_name = row["variable name"] if row["variable name"] else row["documented name"]
-            variable_name = variable_name.strip().lower().replace(" ", "_").replace("__", "_") #clean name
+            display_name = row["variable name"] if row["variable name"] else row["documented name"]
+            variable_name = display_name.strip().lower().replace(" ", "_").replace("__", "_") #clean name
 
             if re.search(r"[^a-zA-Z0-9\_]", variable_name) :
                 self._log.warning("Invalid Name : " + str(variable_name) + " reg: " + str(row["register"]) + " doc name: " + str(row["documented name"]) + " path: " + str(path))
 
-
-            if not variable_name and not row["documented name"]: #skip empty entry / no name. todo add more invalidator checks.
+            if not variable_name: #skip empty entry / no name. todo add more invalidator checks.
+                self._log.warning(f"Skipping empty name for register: {row['register']}")
                 return
 
             #region data type
@@ -653,6 +654,7 @@ class protocol_settings:
                                             register_bit=register_bit,
                                             register_byte= register_byte,
                                             variable_name= variable_name,
+                                            display_name = display_name,
                                             documented_name = row["documented name"],
                                             unit= str(unit_symbol),
                                             unit_mod= unit_multiplier,
