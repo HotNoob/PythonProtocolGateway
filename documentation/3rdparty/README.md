@@ -9,6 +9,7 @@ This README file contains an index of all files in the documentation directory.
 
 - [CAN-Bus-protocol-PYLON-low-voltage-V1.2-20180408.pdf](protocols/CAN-Bus-protocol-PYLON-low-voltage-V1.2-20180408.pdf)
 - [converter.txt](protocols/converter.txt)
+- [EG4-18KPV-12LV-Modbus-Protocol.pdf](protocols/EG4-18KPV-12LV-Modbus-Protocol.pdf)
 - [EG4-3000-EHV - MODBUS Communication Protocol.pdf](protocols/EG4-3000-EHV%20-%20MODBUS%20Communication%20Protocol.pdf)
 - [EG4-6000XP-MODBUS-Communication-Protocol.pdf](protocols/EG4-6000XP-MODBUS-Communication-Protocol.pdf)
 - [Growatt Modbus Protocol v1.24.pdf](protocols/Growatt%20Modbus%20Protocol%20v1.24.pdf)
