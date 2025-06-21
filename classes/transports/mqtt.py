@@ -24,6 +24,7 @@ class mqtt(transport_base):
     base_topic : str = "home/device"
     error_topic : str = "/error"
     discovery_topic : str = "homeassistant"
+    availability_topic : str
     discovery_enabled : bool = False
     json : bool = False
     reconnect_delay : int = 7
@@ -108,7 +109,7 @@ class mqtt(transport_base):
     def exit_handler(self):
         '''on exit handler'''
         self._log.warning("MQTT Exiting...")
-        self.client.publish( self.base_topic + "/" + self.device_identifier + "/availability","offline")
+        self.client.publish(self.availability_topic,"offline",retain=True)
         return
 
     def mqtt_reconnect(self):
@@ -161,7 +162,7 @@ class mqtt(transport_base):
         self._log.info(f"write data from [{from_transport.transport_name}] to mqtt transport")
         self._log.info(data)
         #have to send this every loop, because mqtt doesnt disconnect when HA restarts. HA bug.
-        info = self.client.publish(self.base_topic + "/" + from_transport.device_identifier + "/availability","online", qos=0,retain=True)
+        info = self.client.publish(self.availability_topic,"online", qos=0,retain=True)
         if info.rc == MQTT_ERR_NO_CONN:
             self.connected = False
 
@@ -204,14 +205,16 @@ class mqtt(transport_base):
     def mqtt_discovery(self, from_transport : transport_base):
         self._log.info("Publishing HA Discovery Topics...")
 
+        self.availability_topic = self.base_topic + "/" + from_transport.device_identifier + "/availability"
+
         disc_payload = {}
-        disc_payload["availability_topic"] = self.base_topic + "/" + from_transport.device_identifier + "/availability"
+        disc_payload["availability_topic"] = self.availability_topic
 
         device = {}
         device["manufacturer"] = from_transport.device_manufacturer
         device["model"] = from_transport.device_model
         device["identifiers"] = "hotnoob_" + from_transport.device_model + "_" + from_transport.device_serial_number
-        device["name"] = from_transport.device_name
+        device["name"] = from_transport.device_name.replace("_", " ").strip()
 
         registry_map : list[registry_map_entry] = []
         for entries in from_transport.protocolSettings.registry_map.values():
@@ -229,8 +232,9 @@ class mqtt(transport_base):
                 continue
 
 
-            clean_name = item.variable_name.lower().replace(" ", "_").strip()
-            if not clean_name: #if name is empty, skip
+            clean_name = item.variable_name
+            if not clean_name: #if name is empty, skip^
+                self._log.warning(f"Skipping empty name for item: {item.register}")
                 continue
 
             if False:
@@ -247,7 +251,7 @@ class mqtt(transport_base):
             disc_payload = {}
             disc_payload["availability_topic"] = self.base_topic + "/" + from_transport.device_identifier + "/availability"
             disc_payload["device"] = device
-            disc_payload["name"] = clean_name
+            disc_payload["name"] = item.display_name
             disc_payload["unique_id"] = "hotnoob_" + from_transport.device_serial_number + "_"+clean_name
 
             writePrefix = ""
@@ -259,8 +263,7 @@ class mqtt(transport_base):
             if item.unit:
                 disc_payload["unit_of_measurement"] = item.unit
 
-
-            discovery_topic = self.discovery_topic+"/sensor/HN-" + from_transport.device_serial_number  + writePrefix + "/" + disc_payload["name"].replace(" ", "_") + "/config"
+            discovery_topic = self.discovery_topic+"/sensor/HN-" + from_transport.device_serial_number  + writePrefix + "/" + clean_name + "/config"
 
             self.client.publish(discovery_topic,
                                        json.dumps(disc_payload),qos=1, retain=True)
