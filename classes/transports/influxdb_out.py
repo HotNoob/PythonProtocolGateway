@@ -172,7 +172,7 @@ class influxdb_out(transport_base):
             self._log.warning(f"Backlog full, removed oldest point: {removed.get('measurement', 'unknown')}")
         
         self._save_backlog()
-        self._log.debug(f"Added point to backlog. Backlog size: {len(self.backlog_points)}")
+        # self._log.debug(f"Added point to backlog. Backlog size: {len(self.backlog_points)}")  # Suppressed debug message
 
     def _flush_backlog(self):
         """Flush backlog points to InfluxDB"""
@@ -258,7 +258,7 @@ class influxdb_out(transport_base):
                 try:
                     # Test current connection
                     self.client.ping()
-                    self._log.debug("Periodic connection check: connection is healthy")
+                    # self._log.debug("Periodic connection check: connection is healthy")  # Suppressed debug message
                 except Exception as e:
                     self._log.warning(f"Periodic connection check failed: {e}")
                     return self._attempt_reconnect()
@@ -356,8 +356,8 @@ class influxdb_out(transport_base):
             self._process_and_store_data(data, from_transport)
             return
 
-        self._log.debug(f"write data from [{from_transport.transport_name}] to influxdb_out transport")
-        self._log.debug(f"Data: {data}")
+        # self._log.debug(f"write data from [{from_transport.transport_name}] to influxdb_out transport")  # Suppressed debug message
+        # self._log.debug(f"Data: {data}")  # Suppressed debug message
 
         # Process and write data
         self._process_and_write_data(data, from_transport)
@@ -380,7 +380,7 @@ class influxdb_out(transport_base):
         current_time = time.time()
         if (len(self.batch_points) >= self.batch_size or 
             (current_time - self.last_batch_time) >= self.batch_timeout):
-            self._log.debug(f"Flushing batch to backlog: size={len(self.batch_points)}")
+            # self._log.debug(f"Flushing batch to backlog: size={len(self.batch_points)}")  # Suppressed debug message
             self._flush_batch()
 
     def _process_and_write_data(self, data: dict[str, str], from_transport: transport_base):
@@ -441,11 +441,11 @@ class influxdb_out(transport_base):
                     else:
                         fields[key] = float_val
                 
-                # Log data type conversion for debugging
-                if self._log.isEnabledFor(logging.DEBUG):
-                    original_type = type(value).__name__
-                    final_type = type(fields[key]).__name__
-                    self._log.debug(f"Field {key}: {value} ({original_type}) -> {fields[key]} ({final_type}) [unit_mod: {unit_mod_found}]")
+                # Log data type conversion for debugging (only for successful conversions)
+                # if self._log.isEnabledFor(logging.DEBUG):
+                #     original_type = type(value).__name__
+                #     final_type = type(fields[key]).__name__
+                #     self._log.debug(f"Field {key}: {value} ({original_type}) -> {fields[key]} ({final_type}) [unit_mod: {unit_mod_found}]")  # Suppressed successful conversion debug
                 
             except (ValueError, TypeError):
                 # If conversion fails, store as string
@@ -457,13 +457,13 @@ class influxdb_out(transport_base):
         
         # Add to batch
         self.batch_points.append(point)
-        self._log.debug(f"Added point to batch. Batch size: {len(self.batch_points)}")
+        # self._log.debug(f"Added point to batch. Batch size: {len(self.batch_points)}")  # Suppressed debug message
         
         # Check if we should flush the batch
         current_time = time.time()
         if (len(self.batch_points) >= self.batch_size or 
             (current_time - self.last_batch_time) >= self.batch_timeout):
-            self._log.debug(f"Flushing batch: size={len(self.batch_points)}, timeout={current_time - self.last_batch_time:.1f}s")
+            # self._log.debug(f"Flushing batch: size={len(self.batch_points)}, timeout={current_time - self.last_batch_time:.1f}s")  # Suppressed debug message
             self._flush_batch()
 
     def _create_influxdb_point(self, data: dict[str, str], from_transport: transport_base):
