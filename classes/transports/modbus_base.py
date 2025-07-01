@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import threading
 from typing import TYPE_CHECKING
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -75,9 +76,15 @@ class RegisterFailureTracker:
 class modbus_base(transport_base):
 
 
-    #this is specifically static
+        #this is specifically static
     clients : dict[str, "BaseModbusClient"] = {}
     ''' str is identifier, dict of clients when multiple transports use the same ports '''
+    
+    # Thread safety for client access - port-specific locks
+    _client_locks : dict[str, threading.Lock] = {}
+    ''' Port-specific locks for protecting client access '''
+    _clients_lock : threading.Lock = threading.Lock()
+    ''' Lock for protecting client dictionary access '''
 
     #non-static here for reference, type hinting, python bs ect...
     modbus_delay_increament : float = 0.05
@@ -88,6 +95,10 @@ class modbus_base(transport_base):
 
     modbus_delay : float = 0.85
     '''time inbetween requests'''
+    
+    # Instance-specific delay to prevent timing conflicts between transports
+    instance_delay_offset : float = 0.0
+    ''' Additional delay offset for this specific transport instance '''
 
     analyze_protocol_enabled : bool = False
     analyze_protocol_save_load : bool = False
@@ -101,9 +112,20 @@ class modbus_base(transport_base):
     enable_register_failure_tracking: bool = True
     max_failures_before_disable: int = 5
     disable_duration_hours: int = 12
+    
+    # Instance-specific lock for this transport
+    _transport_lock : threading.Lock = None
+    ''' Lock for protecting this transport's operations '''
+    
+    # Port identifier for this transport
+    _port_identifier : str = None
+    ''' Port identifier for this transport instance '''
 
     def __init__(self, settings : "SectionProxy", protocolSettings : "protocol_settings" = None):
         super().__init__(settings)
+        
+        # Initialize transport-specific lock
+        self._transport_lock = threading.Lock()
 
         self.analyze_protocol_enabled = settings.getboolean("analyze_protocol", fallback=self.analyze_protocol_enabled)
         self.analyze_protocol_save_load = settings.getboolean("analyze_protocol_save_load", fallback=self.analyze_protocol_save_load)
@@ -128,8 +150,23 @@ class modbus_base(transport_base):
         self.send_input_register = settings.getboolean("send_input_register", fallback=self.send_input_register)
         self.modbus_delay = settings.getfloat(["batch_delay", "modbus_delay"], fallback=self.modbus_delay)
         self.modbus_delay_setting = self.modbus_delay
+        
+        # Get instance-specific delay offset to prevent timing conflicts
+        self.instance_delay_offset = settings.getfloat("instance_delay_offset", fallback=self.instance_delay_offset)
 
         # Note: Connection and analyze_protocol will be called after subclass initialization is complete
+
+    def _get_port_lock(self) -> threading.Lock:
+        """Get or create a port-specific lock for this transport"""
+        if self._port_identifier is None:
+            # Default to transport name if no port identifier is set
+            self._port_identifier = self.transport_name
+        
+        with self._clients_lock:
+            if self._port_identifier not in self._client_locks:
+                self._client_locks[self._port_identifier] = threading.Lock()
+        
+        return self._client_locks[self._port_identifier]
 
     def _get_register_range_key(self, register_range: tuple[int, int], registry_type: Registry_Type) -> str:
         """Generate a unique key for a register range"""
@@ -367,45 +404,47 @@ class modbus_base(transport_base):
         time.sleep(self.modbus_delay) #sleep inbetween requests so modbus can rest
 
     def read_data(self) -> dict[str, str]:
-        info = {}
-        #modbus - only read input/holding registries
-        for registry_type in (Registry_Type.INPUT, Registry_Type.HOLDING):
+        # Use transport lock to prevent concurrent access to this transport
+        with self._transport_lock:
+            info = {}
+            #modbus - only read input/holding registries
+            for registry_type in (Registry_Type.INPUT, Registry_Type.HOLDING):
 
-            #enable / disable input/holding register
-            if registry_type == Registry_Type.INPUT and not self.send_input_register:
-                continue
+                #enable / disable input/holding register
+                if registry_type == Registry_Type.INPUT and not self.send_input_register:
+                    continue
 
-            if registry_type == Registry_Type.HOLDING and not self.send_holding_register:
-                continue
+                if registry_type == Registry_Type.HOLDING and not self.send_holding_register:
+                    continue
 
-            #calculate ranges dynamically -- for variable read timing
-            ranges = self.protocolSettings.calculate_registry_ranges(self.protocolSettings.registry_map[registry_type],
-                                                                     self.protocolSettings.registry_map_size[registry_type],
-                                                                     timestamp=self.last_read_time)
+                #calculate ranges dynamically -- for variable read timing
+                ranges = self.protocolSettings.calculate_registry_ranges(self.protocolSettings.registry_map[registry_type],
+                                                                         self.protocolSettings.registry_map_size[registry_type],
+                                                                         timestamp=self.last_read_time)
 
-            registry = self.read_modbus_registers(ranges=ranges, registry_type=registry_type)
-            new_info = self.protocolSettings.process_registery(registry, self.protocolSettings.get_registry_map(registry_type))
+                registry = self.read_modbus_registers(ranges=ranges, registry_type=registry_type)
+                new_info = self.protocolSettings.process_registery(registry, self.protocolSettings.get_registry_map(registry_type))
 
-            if False:
-                new_info = {self.__input_register_prefix + key: value for key, value in new_info.items()}
+                if False:
+                    new_info = {self.__input_register_prefix + key: value for key, value in new_info.items()}
 
-            info.update(new_info)
+                info.update(new_info)
 
-        if not info:
-            self._log.info("Register is Empty; transport busy?")
+            if not info:
+                self._log.info("Register is Empty; transport busy?")
 
-        # Log disabled ranges status periodically (every 10 minutes)
-        if self.enable_register_failure_tracking and hasattr(self, '_last_disabled_status_log') and time.time() - self._last_disabled_status_log > 600:
-            disabled_ranges = self._get_disabled_ranges_info()
-            if disabled_ranges:
-                self._log.info(f"Currently disabled register ranges: {len(disabled_ranges)}")
-                for range_info in disabled_ranges:
-                    self._log.info(f"  - {range_info}")
-            self._last_disabled_status_log = time.time()
-        elif not hasattr(self, '_last_disabled_status_log'):
-            self._last_disabled_status_log = time.time()
+            # Log disabled ranges status periodically (every 10 minutes)
+            if self.enable_register_failure_tracking and hasattr(self, '_last_disabled_status_log') and time.time() - self._last_disabled_status_log > 600:
+                disabled_ranges = self._get_disabled_ranges_info()
+                if disabled_ranges:
+                    self._log.info(f"Currently disabled register ranges: {len(disabled_ranges)}")
+                    for range_info in disabled_ranges:
+                        self._log.info(f"  - {range_info}")
+                self._last_disabled_status_log = time.time()
+            elif not hasattr(self, '_last_disabled_status_log'):
+                self._last_disabled_status_log = time.time()
 
-        return info
+            return info
 
     def validate_protocol(self, protocolSettings : "protocol_settings") -> float:
         score_percent = self.validate_registry(Registry_Type.HOLDING)
@@ -762,19 +801,24 @@ class modbus_base(transport_base):
                 continue
 
             self._log.info("get registers ("+str(index)+"): " +str(registry_type)+ " - " + str(range[0]) + " to " + str(range[0]+range[1]-1) + " ("+str(range[1])+")")
-            time.sleep(self.modbus_delay) #sleep for 1ms to give bus a rest #manual recommends 1s between commands
+            # Sleep with instance-specific offset to prevent timing conflicts between transports
+            total_delay = self.modbus_delay + self.instance_delay_offset
+            time.sleep(total_delay) #sleep to give bus a rest #manual recommends 1s between commands
 
             isError = False
             register = None  # Initialize register variable
-            try:
-                register = self.read_registers(range[0], range[1], registry_type=registry_type)
+            
+            # Use port-specific lock to prevent concurrent access to the same port
+            port_lock = self._get_port_lock()
+            with port_lock:
+                try:
+                    register = self.read_registers(range[0], range[1], registry_type=registry_type)
 
-            except ModbusIOException as e:
-                self._log.error("ModbusIOException: " + str(e))
-                # In pymodbus 3.7+, ModbusIOException doesn't have error_code attribute
-                # Treat all ModbusIOException as retryable errors
-                isError = True
-
+                except ModbusIOException as e:
+                    self._log.error("ModbusIOException: " + str(e))
+                    # In pymodbus 3.7+, ModbusIOException doesn't have error_code attribute
+                    # Treat all ModbusIOException as retryable errors
+                    isError = True
 
             if register is None or isinstance(register, bytes) or (hasattr(register, 'isError') and register.isError()) or isError: #sometimes weird errors are handled incorrectly and response is a ascii error string
                 if register is None:
