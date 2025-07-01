@@ -186,10 +186,11 @@ class modbus_base(transport_base):
             return
             
         tracker = self._get_or_create_failure_tracker(register_range, registry_type)
+        # Only log if the last failure was after the last success (i.e., this is the first success after a failure)
+        should_log_recovery = tracker.last_failure_time > tracker.last_success_time
         tracker.record_success()
         
-        # Log if this was a previously disabled range that's now working
-        if tracker.failure_count == 0 and tracker.last_failure_time > 0:
+        if should_log_recovery:
             self._log.info(f"Register range {registry_type.name} {register_range[0]}-{register_range[1]} is working again after previous failures")
     
     def _record_register_read_failure(self, register_range: tuple[int, int], registry_type: Registry_Type) -> bool:

@@ -1119,7 +1119,8 @@ class protocol_settings:
                 value = registry[entry.register].to_bytes((16 + 7) // 8, byteorder=byte_order) #convert to ushort to bytes
                 value = value.hex() #convert bytes to hex
         elif entry.data_type == Data_Type.ASCII:
-            value = registry[entry.register].to_bytes((16 + 7) // 8, byteorder=byte_order) #convert to ushort to bytes
+            # For ASCII data, use little-endian byte order to read characters in correct order
+            value = registry[entry.register].to_bytes((16 + 7) // 8, byteorder="little") #convert to ushort to bytes
             try:
                 value = value.decode("utf-8") #convert bytes to ascii
             except UnicodeDecodeError as e:
