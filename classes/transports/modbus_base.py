@@ -9,8 +9,80 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from pymodbus.exceptions import ModbusIOException
+from pymodbus.pdu import ExceptionResponse  # Import for exception code constants
 
 from defs.common import strtobool
+
+# Modbus function codes for exception interpretation
+MODBUS_FUNCTION_CODES = {
+    0x01: "Read Coils",
+    0x02: "Read Discrete Inputs", 
+    0x03: "Read Holding Registers",
+    0x04: "Read Input Registers",
+    0x05: "Write Single Coil",
+    0x06: "Write Single Register",
+    0x0F: "Write Multiple Coils",
+    0x10: "Write Multiple Registers",
+    0x14: "Read File Record",
+    0x15: "Write File Record",
+    0x16: "Mask Write Register",
+    0x17: "Read/Write Multiple Registers",
+    0x2B: "Read Device Identification"
+}
+
+# Modbus exception codes for exception interpretation (from pymodbus.pdu.ExceptionResponse)
+MODBUS_EXCEPTION_CODES = {
+    ExceptionResponse.ILLEGAL_FUNCTION: "ILLEGAL_FUNCTION",
+    ExceptionResponse.ILLEGAL_ADDRESS: "ILLEGAL_ADDRESS",
+    ExceptionResponse.ILLEGAL_VALUE: "ILLEGAL_VALUE",
+    ExceptionResponse.DEVICE_FAILURE: "SLAVE_FAILURE",
+    ExceptionResponse.ACKNOWLEDGE: "ACKNOWLEDGE",
+    ExceptionResponse.DEVICE_BUSY: "SLAVE_BUSY",
+    ExceptionResponse.NEGATIVE_ACKNOWLEDGE: "NEGATIVE_ACKNOWLEDGE",
+    ExceptionResponse.MEMORY_PARITY_ERROR: "MEMORY_PARITY_ERROR",
+    ExceptionResponse.GATEWAY_PATH_UNAVIABLE: "GATEWAY_PATH_UNAVAILABLE",
+    ExceptionResponse.GATEWAY_NO_RESPONSE: "GATEWAY_NO_RESPONSE"
+}
+
+# Descriptions for Modbus exception codes (using ExceptionResponse constants as keys)
+MODBUS_EXCEPTION_DESCRIPTIONS = {
+    ExceptionResponse.ILLEGAL_FUNCTION: "The function code received in the query is not an allowable action for the slave",
+    ExceptionResponse.ILLEGAL_ADDRESS: "The data address received in the query is not an allowable address for the slave",
+    ExceptionResponse.ILLEGAL_VALUE: "A value contained in the query data field is not an allowable value for the slave",
+    ExceptionResponse.DEVICE_FAILURE: "An unrecoverable error occurred while the slave was attempting to perform the requested action",
+    ExceptionResponse.ACKNOWLEDGE: "The slave has accepted the request and is processing it, but a long duration of time will be required",
+    ExceptionResponse.DEVICE_BUSY: "The slave is engaged in processing a long-duration program command",
+    ExceptionResponse.NEGATIVE_ACKNOWLEDGE: "The slave cannot perform the program function received in the query",
+    ExceptionResponse.MEMORY_PARITY_ERROR: "The slave attempted to read record file, but detected a parity error in the memory",
+    ExceptionResponse.GATEWAY_PATH_UNAVIABLE: "The gateway path is not available",
+    ExceptionResponse.GATEWAY_NO_RESPONSE: "The gateway target device failed to respond"
+}
+
+def interpret_modbus_exception_code(code):
+    """
+    Interpret a Modbus exception response code and return human-readable information.
+    
+    Args:
+        code (int): The exception response code (e.g., 132)
+        
+    Returns:
+        str: Human-readable description of the exception
+    """
+    # Extract function code (lower 7 bits)
+    function_code = code & 0x7F
+    
+    # Check if this is an exception response (upper bit set)
+    if code & 0x80:
+        # This is an exception response
+        exception_code = code & 0x7F  # The exception code is in the lower 7 bits
+        function_name = MODBUS_FUNCTION_CODES.get(function_code, f"Unknown Function ({function_code})")
+        exception_name = MODBUS_EXCEPTION_CODES.get(exception_code, f"Unknown Exception ({exception_code})")
+        description = MODBUS_EXCEPTION_DESCRIPTIONS.get(exception_code, "Unknown exception code")
+        return f"Modbus Exception: {function_name} failed with {exception_name} - {description}"
+    else:
+        # This is not an exception response
+        function_name = MODBUS_FUNCTION_CODES.get(function_code, f"Unknown Function ({function_code})")
+        return f"Modbus Function: {function_name} (not an exception response)"
 
 from ..protocol_settings import (
     Data_Type,
@@ -824,7 +896,16 @@ class modbus_base(transport_base):
                 elif isinstance(register, bytes):
                     self._log.error(register.decode("utf-8"))
                 else:
-                    self._log.error(str(register))
+                    # Enhanced error logging with Modbus exception interpretation
+                    error_msg = str(register)
+                    
+                    # Check if this is an ExceptionResponse and extract the exception code
+                    if hasattr(register, 'function_code') and hasattr(register, 'exception_code'):
+                        exception_code = register.function_code | 0x80  # Convert to exception response code
+                        interpreted_error = interpret_modbus_exception_code(exception_code)
+                        self._log.error(f"{error_msg} - {interpreted_error}")
+                    else:
+                        self._log.error(error_msg)
                 
                 # Record the failure for this register range
                 should_disable = self._record_register_read_failure(range, registry_type)
