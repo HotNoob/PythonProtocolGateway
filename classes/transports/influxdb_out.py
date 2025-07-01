@@ -419,7 +419,7 @@ class influxdb_out(transport_base):
                             # If unit_mod is not 1.0, this value should be treated as float
                             if entry.unit_mod != 1.0:
                                 should_force_float = True
-                                self._log.debug(f"Variable {key} has unit_mod {entry.unit_mod}, forcing float format")
+                                # self._log.debug(f"Variable {key} has unit_mod {entry.unit_mod}, forcing float format")  # Suppressed debug message
                             break
                     if should_force_float:
                         break
