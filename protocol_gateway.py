@@ -7,6 +7,7 @@ Main module for Growatt / Inverters ModBus RTU data to MQTT
 import importlib
 import sys
 import time
+import threading
 
 # Check if Python version is greater than 3.9
 if sys.version_info < (3, 9):
@@ -188,6 +189,27 @@ class Protocol_Gateway:
                     to_transport.write_data({entry.variable_name : data}, transport)
                     break
 
+    def _process_transport_read(self, transport):
+        """Process a single transport read operation"""
+        try:
+            if not transport.connected:
+                transport.connect() #reconnect
+            else: #transport is connected
+                info = transport.read_data()
+
+                if not info:
+                    return
+
+                #todo. broadcast option
+                if transport.bridge:
+                    for to_transport in self.__transports:
+                        if to_transport.transport_name == transport.bridge:
+                            to_transport.write_data(info, transport)
+                            break
+        except Exception as err:
+            self.__log.error(f"Error processing transport {transport.transport_name}: {err}")
+            traceback.print_exc()
+
     def run(self):
         """
         run method, starts ModBus connection and mqtt connection
@@ -201,25 +223,29 @@ class Protocol_Gateway:
         while self.__running:
             try:
                 now = time.time()
+                ready_transports = []
+                
+                # Find all transports that are ready to read
                 for transport in self.__transports:
-                    if transport.read_interval > 0 and now - transport.last_read_time  > transport.read_interval:
+                    if transport.read_interval > 0 and now - transport.last_read_time > transport.read_interval:
                         transport.last_read_time = now
-                        #preform read
-                        if not transport.connected:
-                            transport.connect() #reconnect
-                        else: #transport is connected
-
-                            info = transport.read_data()
-
-                            if not info:
-                                continue
-
-                            #todo. broadcast option
-                            if transport.bridge:
-                                for to_transport in self.__transports:
-                                    if to_transport.transport_name == transport.bridge:
-                                        to_transport.write_data(info, transport)
-                                        break
+                        ready_transports.append(transport)
+                
+                # Dispatch reads concurrently if multiple transports are ready
+                if len(ready_transports) > 1:
+                    threads = []
+                    for transport in ready_transports:
+                        thread = threading.Thread(target=self._process_transport_read, args=(transport,))
+                        thread.daemon = True
+                        thread.start()
+                        threads.append(thread)
+                    
+                    # Wait for all threads to complete
+                    for thread in threads:
+                        thread.join()
+                elif len(ready_transports) == 1:
+                    # Single transport - process directly
+                    self._process_transport_read(ready_transports[0])
 
             except Exception as err:
                 traceback.print_exc()
