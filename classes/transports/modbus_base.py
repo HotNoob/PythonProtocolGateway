@@ -386,59 +386,67 @@ class modbus_base(transport_base):
 
 
     def write_data(self, data : dict[str, str], from_transport : transport_base) -> None:
-        if not self.write_enabled:
-            return
+        # Use transport lock to prevent concurrent access to this transport instance
+        with self._transport_lock:
+            if not self.write_enabled:
+                return
 
-        registry_map = self.protocolSettings.get_registry_map(Registry_Type.HOLDING)
+            registry_map = self.protocolSettings.get_registry_map(Registry_Type.HOLDING)
 
-        for key, value in data.items():
-            for entry in registry_map:
-                if entry.variable_name == key:
+            for variable_name, value in data.items():
+                entry = None
+                for e in registry_map:
+                    if e.variable_name == variable_name:
+                        entry = e
+                        break
+
+                if entry:
                     self.write_variable(entry, value, Registry_Type.HOLDING)
-                    break
 
-        time.sleep(self.modbus_delay) #sleep inbetween requests so modbus can rest
+            time.sleep(self.modbus_delay) #sleep inbetween requests so modbus can rest
 
     def read_data(self) -> dict[str, str]:
-        info = {}
-        #modbus - only read input/holding registries
-        for registry_type in (Registry_Type.INPUT, Registry_Type.HOLDING):
+        # Use transport lock to prevent concurrent access to this transport instance
+        with self._transport_lock:
+            info = {}
+            #modbus - only read input/holding registries
+            for registry_type in (Registry_Type.INPUT, Registry_Type.HOLDING):
 
-            #enable / disable input/holding register
-            if registry_type == Registry_Type.INPUT and not self.send_input_register:
-                continue
+                #enable / disable input/holding register
+                if registry_type == Registry_Type.INPUT and not self.send_input_register:
+                    continue
 
-            if registry_type == Registry_Type.HOLDING and not self.send_holding_register:
-                continue
+                if registry_type == Registry_Type.HOLDING and not self.send_holding_register:
+                    continue
 
-            #calculate ranges dynamically -- for variable read timing
-            ranges = self.protocolSettings.calculate_registry_ranges(self.protocolSettings.registry_map[registry_type],
-                                                                     self.protocolSettings.registry_map_size[registry_type],
-                                                                     timestamp=self.last_read_time)
+                #calculate ranges dynamically -- for variable read timing
+                ranges = self.protocolSettings.calculate_registry_ranges(self.protocolSettings.registry_map[registry_type],
+                                                                         self.protocolSettings.registry_map_size[registry_type],
+                                                                         timestamp=self.last_read_time)
 
-            registry = self.read_modbus_registers(ranges=ranges, registry_type=registry_type)
-            new_info = self.protocolSettings.process_registery(registry, self.protocolSettings.get_registry_map(registry_type))
+                registry = self.read_modbus_registers(ranges=ranges, registry_type=registry_type)
+                new_info = self.protocolSettings.process_registery(registry, self.protocolSettings.get_registry_map(registry_type))
 
-            if False:
-                new_info = {self.__input_register_prefix + key: value for key, value in new_info.items()}
+                if False:
+                    new_info = {self.__input_register_prefix + key: value for key, value in new_info.items()}
 
-            info.update(new_info)
+                info.update(new_info)
 
-        if not info:
-            self._log.info("Register is Empty; transport busy?")
+            if not info:
+                self._log.info("Register is Empty; transport busy?")
 
-        # Log disabled ranges status periodically (every 10 minutes)
-        if self.enable_register_failure_tracking and hasattr(self, '_last_disabled_status_log') and time.time() - self._last_disabled_status_log > 600:
-            disabled_ranges = self._get_disabled_ranges_info()
-            if disabled_ranges:
-                self._log.info(f"Currently disabled register ranges: {len(disabled_ranges)}")
-                for range_info in disabled_ranges:
-                    self._log.info(f"  - {range_info}")
-            self._last_disabled_status_log = time.time()
-        elif not hasattr(self, '_last_disabled_status_log'):
-            self._last_disabled_status_log = time.time()
+            # Log disabled ranges status periodically (every 10 minutes)
+            if self.enable_register_failure_tracking and hasattr(self, '_last_disabled_status_log') and time.time() - self._last_disabled_status_log > 600:
+                disabled_ranges = self._get_disabled_ranges_info()
+                if disabled_ranges:
+                    self._log.info(f"Currently disabled register ranges: {len(disabled_ranges)}")
+                    for range_info in disabled_ranges:
+                        self._log.info(f"  - {range_info}")
+                self._last_disabled_status_log = time.time()
+            elif not hasattr(self, '_last_disabled_status_log'):
+                self._last_disabled_status_log = time.time()
 
-        return info
+            return info
 
     def validate_protocol(self, protocolSettings : "protocol_settings") -> float:
         score_percent = self.validate_registry(Registry_Type.HOLDING)
