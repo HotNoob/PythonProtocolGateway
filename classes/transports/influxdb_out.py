@@ -406,49 +406,38 @@ class influxdb_out(transport_base):
             # Check if we should force float formatting based on protocol settings
             should_force_float = False
             unit_mod_found = None
-            
-            # Try to get registry entry from protocol settings to check unit_mod
+            is_enum = False
+            # Try to get registry entry from protocol settings to check unit_mod and enum
+            entry = None
             if hasattr(from_transport, 'protocolSettings') and from_transport.protocolSettings:
-                # Check both input and holding registries
                 for registry_type in [Registry_Type.INPUT, Registry_Type.HOLDING]:
                     registry_map = from_transport.protocolSettings.get_registry_map(registry_type)
-                    for entry in registry_map:
-                        # Match by variable_name (which is lowercase)
-                        if entry.variable_name.lower() == key.lower():
-                            unit_mod_found = entry.unit_mod
-                            # If unit_mod is not 1.0, this value should be treated as float
-                            if entry.unit_mod != 1.0:
+                    for e in registry_map:
+                        if e.variable_name.lower() == key.lower():
+                            entry = e
+                            unit_mod_found = e.unit_mod
+                            if e.unit_mod != 1.0:
                                 should_force_float = True
-                                # self._log.debug(f"Variable {key} has unit_mod {entry.unit_mod}, forcing float format")  # Suppressed debug message
+                            if getattr(e, 'has_enum_mapping', False):
+                                is_enum = True
                             break
-                    if should_force_float:
+                    if should_force_float or is_enum:
                         break
-            
+            # If this field is an enum, always treat as string
+            if is_enum:
+                fields[key] = str(value)
+                continue
             # Try to convert to numeric values for InfluxDB
             try:
-                # Try to convert to float first
                 float_val = float(value)
-                
-                # Always use float for InfluxDB to avoid type conflicts
-                # InfluxDB is strict about field types - once a field is created as integer,
-                # it must always be integer. Using float avoids this issue.
                 if self.force_float:
                     fields[key] = float_val
                 else:
-                    # Only use integer if it's actually an integer and we're not forcing floats
                     if float_val.is_integer():
                         fields[key] = int(float_val)
                     else:
                         fields[key] = float_val
-                
-                # Log data type conversion for debugging (only for successful conversions)
-                # if self._log.isEnabledFor(logging.DEBUG):
-                #     original_type = type(value).__name__
-                #     final_type = type(fields[key]).__name__
-                #     self._log.debug(f"Field {key}: {value} ({original_type}) -> {fields[key]} ({final_type}) [unit_mod: {unit_mod_found}]")  # Suppressed successful conversion debug
-                
             except (ValueError, TypeError):
-                # If conversion fails, store as string
                 fields[key] = str(value)
                 self._log.debug(f"Field {key}: {value} -> string (conversion failed)")
         
@@ -488,41 +477,40 @@ class influxdb_out(transport_base):
             # Check if we should force float formatting based on protocol settings
             should_force_float = False
             unit_mod_found = None
-            
-            # Try to get registry entry from protocol settings to check unit_mod
+            is_enum = False
+            # Try to get registry entry from protocol settings to check unit_mod and enum
+            entry = None
             if hasattr(from_transport, 'protocolSettings') and from_transport.protocolSettings:
-                # Check both input and holding registries
                 for registry_type in [Registry_Type.INPUT, Registry_Type.HOLDING]:
                     registry_map = from_transport.protocolSettings.get_registry_map(registry_type)
-                    for entry in registry_map:
-                        # Match by variable_name (which is lowercase)
-                        if entry.variable_name.lower() == key.lower():
-                            unit_mod_found = entry.unit_mod
-                            # If unit_mod is not 1.0, this value should be treated as float
-                            if entry.unit_mod != 1.0:
+                    for e in registry_map:
+                        if e.variable_name.lower() == key.lower():
+                            entry = e
+                            unit_mod_found = e.unit_mod
+                            if e.unit_mod != 1.0:
                                 should_force_float = True
+                            if getattr(e, 'has_enum_mapping', False):
+                                is_enum = True
                             break
-                    if should_force_float:
+                    if should_force_float or is_enum:
                         break
-            
+            # If this field is an enum, always treat as string
+            if is_enum:
+                fields[key] = str(value)
+                continue
             # Try to convert to numeric values for InfluxDB
             try:
-                # Try to convert to float first
                 float_val = float(value)
-                
-                # Always use float for InfluxDB to avoid type conflicts
                 if self.force_float:
                     fields[key] = float_val
                 else:
-                    # Only use integer if it's actually an integer and we're not forcing floats
                     if float_val.is_integer():
                         fields[key] = int(float_val)
                     else:
                         fields[key] = float_val
-                
             except (ValueError, TypeError):
-                # If conversion fails, store as string
                 fields[key] = str(value)
+                self._log.debug(f"Field {key}: {value} -> string (conversion failed)")
         
         # Create InfluxDB point
         point = {

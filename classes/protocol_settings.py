@@ -224,6 +224,9 @@ class registry_map_entry:
     write_mode : WriteMode = WriteMode.READ
     ''' enable disable reading/writing '''
 
+    has_enum_mapping : bool = False
+    ''' indicates if this field has enum mappings that should be treated as strings '''
+
     def __str__(self):
         return self.variable_name
 
@@ -685,7 +688,8 @@ class protocol_settings:
                                             value_regex=value_regex,
                                             read_command = read_command,
                                             read_interval=read_interval,
-                                            write_mode=writeMode
+                                            write_mode=writeMode,
+                                            has_enum_mapping=value_is_json
                                         )
                 registry_map.append(item)
 
