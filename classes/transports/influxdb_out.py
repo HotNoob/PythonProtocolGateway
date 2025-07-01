@@ -9,7 +9,7 @@ import logging
 
 from defs.common import strtobool
 
-from ..protocol_settings import Registry_Type, WriteMode, registry_map_entry
+from ..protocol_settings import Registry_Type, WriteMode, registry_map_entry, Data_Type
 from .transport_base import transport_base
 
 
@@ -409,11 +409,10 @@ class influxdb_out(transport_base):
         # Prepare fields (the actual data values)
         fields = {}
         for key, value in data.items():
-            # Check if we should force float formatting based on protocol settings
             should_force_float = False
             unit_mod_found = None
             is_enum = False
-            # Try to get registry entry from protocol settings to check unit_mod and enum
+            is_ascii = False
             entry = None
             if hasattr(from_transport, 'protocolSettings') and from_transport.protocolSettings:
                 for registry_type in [Registry_Type.INPUT, Registry_Type.HOLDING]:
@@ -426,14 +425,14 @@ class influxdb_out(transport_base):
                                 should_force_float = True
                             if getattr(e, 'has_enum_mapping', False):
                                 is_enum = True
+                            if getattr(e, 'data_type', None) == Data_Type.ASCII:
+                                is_ascii = True
                             break
-                    if should_force_float or is_enum:
+                    if should_force_float or is_enum or is_ascii:
                         break
-            # If this field is an enum, always treat as string
-            if is_enum:
+            if is_enum or is_ascii:
                 fields[key] = str(value)
                 continue
-            # Try to convert to numeric values for InfluxDB
             try:
                 float_val = float(value)
                 if self.force_float:
@@ -480,11 +479,10 @@ class influxdb_out(transport_base):
         # Prepare fields (the actual data values)
         fields = {}
         for key, value in data.items():
-            # Check if we should force float formatting based on protocol settings
             should_force_float = False
             unit_mod_found = None
             is_enum = False
-            # Try to get registry entry from protocol settings to check unit_mod and enum
+            is_ascii = False
             entry = None
             if hasattr(from_transport, 'protocolSettings') and from_transport.protocolSettings:
                 for registry_type in [Registry_Type.INPUT, Registry_Type.HOLDING]:
@@ -497,14 +495,14 @@ class influxdb_out(transport_base):
                                 should_force_float = True
                             if getattr(e, 'has_enum_mapping', False):
                                 is_enum = True
+                            if getattr(e, 'data_type', None) == Data_Type.ASCII:
+                                is_ascii = True
                             break
-                    if should_force_float or is_enum:
+                    if should_force_float or is_enum or is_ascii:
                         break
-            # If this field is an enum, always treat as string
-            if is_enum:
+            if is_enum or is_ascii:
                 fields[key] = str(value)
                 continue
-            # Try to convert to numeric values for InfluxDB
             try:
                 float_val = float(value)
                 if self.force_float:
