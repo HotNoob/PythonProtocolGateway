@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import threading
 from typing import TYPE_CHECKING
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -78,6 +79,12 @@ class modbus_base(transport_base):
     #this is specifically static
     clients : dict[str, "BaseModbusClient"] = {}
     ''' str is identifier, dict of clients when multiple transports use the same ports '''
+    
+    # Threading locks for concurrency control
+    _clients_lock : threading.Lock = threading.Lock()
+    ''' Lock for accessing the shared clients dictionary '''
+    _client_locks : dict[str, threading.Lock] = {}
+    ''' Port-specific locks to allow concurrent access to different ports '''
 
     #non-static here for reference, type hinting, python bs ect...
     modbus_delay_increament : float = 0.05
@@ -96,6 +103,10 @@ class modbus_base(transport_base):
     send_holding_register : bool = True
     send_input_register : bool = True
     
+    # Transport-specific lock
+    _transport_lock : threading.Lock = None
+    ''' Lock for this specific transport instance '''
+    
     # Register failure tracking
     register_failure_trackers: dict[str, RegisterFailureTracker] = {}
     enable_register_failure_tracking: bool = True
@@ -104,6 +115,9 @@ class modbus_base(transport_base):
 
     def __init__(self, settings : "SectionProxy", protocolSettings : "protocol_settings" = None):
         super().__init__(settings)
+
+        # Initialize transport-specific lock
+        self._transport_lock = threading.Lock()
 
         self.analyze_protocol_enabled = settings.getboolean("analyze_protocol", fallback=self.analyze_protocol_enabled)
         self.analyze_protocol_save_load = settings.getboolean("analyze_protocol_save_load", fallback=self.analyze_protocol_save_load)
@@ -130,6 +144,25 @@ class modbus_base(transport_base):
         self.modbus_delay_setting = self.modbus_delay
 
         # Note: Connection and analyze_protocol will be called after subclass initialization is complete
+
+    def _get_port_identifier(self) -> str:
+        """Get a unique identifier for this transport's port"""
+        if hasattr(self, 'port'):
+            return f"{self.port}_{self.baudrate}"
+        elif hasattr(self, 'host') and hasattr(self, 'port'):
+            return f"{self.host}_{self.port}"
+        else:
+            return self.transport_name
+    
+    def _get_port_lock(self) -> threading.Lock:
+        """Get or create a lock for this transport's port"""
+        port_id = self._get_port_identifier()
+        
+        with self._clients_lock:
+            if port_id not in self._client_locks:
+                self._client_locks[port_id] = threading.Lock()
+        
+        return self._client_locks[port_id]
 
     def _get_register_range_key(self, register_range: tuple[int, int], registry_type: Registry_Type) -> str:
         """Generate a unique key for a register range"""
