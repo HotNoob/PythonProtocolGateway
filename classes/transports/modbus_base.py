@@ -273,9 +273,9 @@ class modbus_base(transport_base):
             self.update_identifier()
 
     def connect(self):
-        # Base class connect method - subclasses should override this
-        # to establish the actual hardware connection
-        pass
+        if self.connected and self.first_connect:
+            self.first_connect = False
+            self.init_after_connect()
 
     def read_serial_number(self) -> str:
         # First try to read "Serial Number" from input registers (for protocols like EG4 v58)
@@ -328,10 +328,10 @@ class modbus_base(transport_base):
 
         self._log.info("Validating Protocol for Writing")
         self.write_enabled = False
-        
+
         # Add a small delay to ensure device is ready, especially during initialization
         time.sleep(self.modbus_delay * 2)
-        
+
         try:
             score_percent = self.validate_protocol(Registry_Type.HOLDING)
             if(score_percent > 90):
@@ -391,18 +391,6 @@ class modbus_base(transport_base):
 
             info.update(new_info)
 
-        # Check for serial number variables and promote to device_serial_number
-        if info:
-            # Look for serial number variable
-            if "serial_number" in info:
-                value = info["serial_number"]
-                if value and value != "None" and str(value).strip():
-                    # Found a valid serial number, promote it
-                    if self.device_serial_number != str(value):
-                        self._log.info(f"Promoting parsed serial number: {value} (from variable: serial_number)")
-                        self.device_serial_number = str(value)
-                        self.update_identifier()
-
         if not info:
             self._log.info("Register is Empty; transport busy?")
 
@@ -459,34 +447,23 @@ class modbus_base(transport_base):
             print(file)
             protocol_names.append(file)
 
-        # Use the configured protocol's register ranges instead of maximum from all protocols
-        # This prevents trying to read non-existent registers from other protocols
-        if hasattr(self, 'protocolSettings') and self.protocolSettings:
-            max_input_register = self.protocolSettings.registry_map_size[Registry_Type.INPUT]
-            max_holding_register = self.protocolSettings.registry_map_size[Registry_Type.HOLDING]
-            self._log.debug(f"Using configured protocol register ranges: input={max_input_register}, holding={max_holding_register}")
-            
-            # Use the configured protocol for analysis
-            protocols[self.protocolSettings.protocol] = self.protocolSettings
-        else:
-            # Fallback to calculating max from all protocols (original behavior)
-            max_input_register : int = 0
-            max_holding_register : int = 0
+        max_input_register : int = 0
+        max_holding_register : int = 0
 
-            for name in protocol_names:
-                protocols[name] = protocol_settings(name)
+        for name in protocol_names:
+            protocols[name] = protocol_settings(name)
 
-                if protocols[name].registry_map_size[Registry_Type.INPUT] > max_input_register:
-                    max_input_register = protocols[name].registry_map_size[Registry_Type.INPUT]
+            if protocols[name].registry_map_size[Registry_Type.INPUT] > max_input_register:
+                max_input_register = protocols[name].registry_map_size[Registry_Type.INPUT]
 
-                if protocols[name].registry_map_size[Registry_Type.HOLDING] > max_holding_register:
-                    max_holding_register = protocols[name].registry_map_size[Registry_Type.HOLDING]
+            if protocols[name].registry_map_size[Registry_Type.HOLDING] > max_holding_register:
+                max_holding_register = protocols[name].registry_map_size[Registry_Type.HOLDING]
 
-            self._log.debug(f"max input register: {max_input_register}")
-            self._log.debug(f"max holding register: {max_holding_register}")
+        print("max input register: ", max_input_register)
+        print("max holding register: ", max_holding_register)
 
         self.modbus_delay = self.modbus_delay #decrease delay because can probably get away with it due to lots of small reads
-        self._log.debug("read INPUT Registers: ")
+        print("read INPUT Registers: ")
 
         input_save_path = "input_registry.json"
         holding_save_path = "holding_registry.json"
@@ -735,42 +712,12 @@ class modbus_base(transport_base):
                 start = entry.register
                 end = entry.register
             else:
-                start = min(entry.concatenate_registers)
+                start = entry.register
                 end = max(entry.concatenate_registers)
 
             registers = self.read_modbus_registers(start=start, end=end, registry_type=registry_type)
-            
-            # Special handling for concatenated ASCII variables (like serial numbers)
-            if entry.concatenate and entry.data_type == Data_Type.ASCII:
-                concatenated_value = ""
-                
-                # For serial numbers, we need to extract 8-bit ASCII characters from 16-bit registers
-                # Each register contains two ASCII characters (low byte and high byte)
-                for reg in entry.concatenate_registers:
-                    if reg in registers:
-                        reg_value = registers[reg]
-                        # Extract low byte (bits 0-7) and high byte (bits 8-15)
-                        low_byte = reg_value & 0xFF
-                        high_byte = (reg_value >> 8) & 0xFF
-                        
-                        # Convert each byte to ASCII character
-                        low_char = chr(low_byte)
-                        high_char = chr(high_byte)
-                        
-                        concatenated_value += low_char + high_char
-                    else:
-                        self._log.warning(f"Register {reg} not found in registry")
-                
-                result = concatenated_value.replace("\x00", " ").strip()
-                return result
-            
-            # Only process the specific entry, not the entire registry map
-            results = self.protocolSettings.process_registery(registers, [entry])
-            result = results.get(entry.variable_name)
-            return result
-        else:
-            self._log.warning(f"Entry not found for variable: {variable_name}")
-            return None
+            results = self.protocolSettings.process_registery(registers, registry_map)
+            return results[entry.variable_name]
 
     def read_modbus_registers(self, ranges : list[tuple] = None, start : int = 0, end : int = None, batch_size : int = None, registry_type : Registry_Type = Registry_Type.INPUT ) -> dict:
         ''' maybe move this to transport_base ?'''

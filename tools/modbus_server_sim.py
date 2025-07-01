@@ -28,8 +28,8 @@ with open(holding_save_path, "r") as file:
 input_registry = {int(key): value for key, value in input_registry.items()}
 holding_registry = {int(key): value for key, value in holding_registry.items()}
 
-slave.add_block('INPUT', READ_INPUT_REGISTERS, 0, max(input_registry.keys()) +1 )  # 100 registers
-slave.add_block('HOLDING', HOLDING_REGISTERS,  0, max(holding_registry.keys()) +1)  # 100 registers
+slave.add_block('INPUT', READ_INPUT_REGISTERS, 0, max(input_registry.keys()) +1 )
+slave.add_block('HOLDING', HOLDING_REGISTERS,  0, max(holding_registry.keys()) +1)
 
 for address, value in input_registry.items():
     slave.set_values('INPUT', address, [value])

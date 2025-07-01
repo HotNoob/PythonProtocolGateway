@@ -46,9 +46,9 @@ class modbus_udp(transport_base):
 
     def read_registers(self, start, count=1, registry_type : Registry_Type = Registry_Type.INPUT, **kwargs):
         if registry_type == Registry_Type.INPUT:
-            return self.client.read_input_registers(start, count, **kwargs)
+            return self.client.read_input_registers(start, count=count, **kwargs)
         elif registry_type == Registry_Type.HOLDING:
-            return self.client.read_holding_registers(start, count, **kwargs)
+            return self.client.read_holding_registers(start, count=count, **kwargs)
 
     def connect(self):
         self.connected = self.client.connect()

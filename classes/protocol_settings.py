@@ -265,7 +265,7 @@ class protocol_settings:
     _log : logging.Logger = None
 
 
-    def __init__(self, protocol : str, transport_settings : "SectionProxy" = None, settings_dir : str = "protocols", unique_id : str = None):
+    def __init__(self, protocol : str, transport_settings : "SectionProxy" = None, settings_dir : str = "protocols"):
 
         #apply log level to logger
         self._log_level = getattr(logging, logging.getLevelName(logging.getLogger().getEffectiveLevel()), logging.INFO)
@@ -275,7 +275,6 @@ class protocol_settings:
         self.protocol = protocol
         self.settings_dir = settings_dir
         self.transport_settings = transport_settings
-        self.unique_id = unique_id  # Store unique identifier for this instance
 
         #load variable mask
         self.variable_mask = []
@@ -530,7 +529,7 @@ class protocol_settings:
                 else:
                     data_type_str = row["data type"]
 
-                #check if datatype specifies byteorder 
+                #check if datatype specifies byteorder
                 if data_type_str.upper().endswith("_LE"):
                     data_byteorder = "little"
                     data_type_str = data_type_str[:-3]
@@ -987,7 +986,7 @@ class protocol_settings:
 
             if isinstance(register, bytes):
                 register = int.from_bytes(register, byteorder=byte_order)
-                            
+
             value = (register >> bit_index) & bit_mask
 
 
@@ -1097,7 +1096,7 @@ class protocol_settings:
             else:
                 flags : list[str] = []
                 if end_bit > 0:
-                    end : int = 16 if end_bit >= 16 else end_bit    
+                    end : int = 16 if end_bit >= 16 else end_bit
                     for i in range(start_bit, end):  # Iterate over each bit position (0 to 15)
                         # Check if the i-th bit is set
                         if (val >> i) & 1:
@@ -1150,82 +1149,41 @@ class protocol_settings:
 
         concatenate_registry : dict = {}
         info = {}
-        
-        # First pass: process all non-concatenated entries
         for entry in map:
+
             if entry.register not in registry:
                 continue
-                
-            if not entry.concatenate:
-                value = ""
-                if isinstance(registry[entry.register], bytes):
-                    value = self.process_register_bytes(registry, entry)
-                else:
-                    value = self.process_register_ushort(registry, entry)
-                info[entry.variable_name] = value
-        
-        # Second pass: process concatenated entries
-        for entry in map:
-            if entry.register not in registry:
-                continue
-                
+            value = ""
+
+            if isinstance(registry[entry.register], bytes):
+                value = self.process_register_bytes(registry, entry)
+            else:
+                value = self.process_register_ushort(registry, entry)
+
+            #if item.unit:
+            #    value = str(value) + item.unit
             if entry.concatenate:
-                # For concatenated entries, we need to process each register in the concatenate_registers list
-                concatenated_value = ""
-                all_registers_exist = True
-                
-                # For ASCII concatenated variables, extract 8-bit characters from 16-bit registers
-                if entry.data_type == Data_Type.ASCII:
-                    for reg in entry.concatenate_registers:
-                        if reg not in registry:
-                            all_registers_exist = False
-                            break
-                        
-                        reg_value = registry[reg]
-                        # Extract high byte (bits 8-15) and low byte (bits 0-7)
-                        high_byte = (reg_value >> 8) & 0xFF
-                        low_byte = reg_value & 0xFF
-                        
-                        # Convert each byte to ASCII character (low byte first, then high byte)
-                        low_char = chr(low_byte)
-                        high_char = chr(high_byte)
-                        concatenated_value += low_char + high_char
-                else:
-                    for reg in entry.concatenate_registers:
-                        if reg not in registry:
-                            all_registers_exist = False
-                            break
-                        
-                        # Create a temporary entry for this register to process it
-                        temp_entry = registry_map_entry(
-                            registry_type=entry.registry_type,
-                            register=reg,
-                            register_bit=0,
-                            register_byte=0,
-                            variable_name=f"temp_{reg}",
-                            documented_name=f"temp_{reg}",
-                            unit="",
-                            unit_mod=1.0,
-                            concatenate=False,
-                            concatenate_registers=[],
-                            values=[],
-                            data_type=entry.data_type,
-                            data_type_size=entry.data_type_size
-                        )
-                        
-                        if isinstance(registry[reg], bytes):
-                            value = self.process_register_bytes(registry, temp_entry)
-                        else:
-                            value = self.process_register_ushort(registry, temp_entry)
-                        
-                        concatenated_value += str(value)
-                
-                if all_registers_exist:
-                    # Replace null characters with spaces and trim for ASCII
+                concatenate_registry[entry.register] = value
+
+                all_exist = True
+                for key in entry.concatenate_registers:
+                    if key not in concatenate_registry:
+                        all_exist = False
+                        break
+                if all_exist:
+                #if all(key in concatenate_registry for key in item.concatenate_registers):
+                    concatenated_value = ""
+                    for key in entry.concatenate_registers:
+                        concatenated_value = concatenated_value + str(concatenate_registry[key])
+                        del concatenate_registry[key]
+
+                    #replace null characters with spaces and trim
                     if entry.data_type == Data_Type.ASCII:
                         concatenated_value = concatenated_value.replace("\x00", " ").strip()
-                    
+
                     info[entry.variable_name] = concatenated_value
+            else:
+                info[entry.variable_name] = value
 
         return info
 

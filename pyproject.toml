@@ -1,0 +1,33 @@
+#pip install build twine
+#python -m build
+#python -m twine upload dist/*
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-protocol-gateway"
+version = "1.1.10"
+description = "Python Protocol Gateway reads data via Modbus RTU or other protocols and translates the data for MQTT. In the long run, Python Protocol Gateway will become a general purpose protocol gateway to translate between more than just modbus and mqtt."
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "HotNoob", email = "hotnoob@hotnoob.com" }]
+requires-python = ">=3.9"
+dynamic = ["dependencies", "optional-dependencies"]
+
+[project.scripts]
+protocol-gateway = "protocol_gateway:main"
+ppg = "protocol_gateway:main"
+
+[tool.setuptools]
+py-modules = ["protocol_gateway"]
+license-files = ["LICENSE"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+optional-dependencies = {dev = { file = ["requirements-dev.txt"] }}
+
+[project.urls]
+Homepage = "https://github.com/HotNoob/PythonProtocolGateway"
+Repository = "https://github.com/HotNoob/PythonProtocolGateway"

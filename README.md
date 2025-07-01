@@ -5,6 +5,7 @@
 ![Python 3.12](https://github.com/HotNoob/PythonProtocolGateway/actions/workflows/python-3.12.yml/badge.svg)
 ![Python 3.13](https://github.com/HotNoob/PythonProtocolGateway/actions/workflows/python-3.13.yml/badge.svg)
 
+[![PyPI version](https://img.shields.io/pypi/v/python-protocol-gateway.svg)](https://pypi.org/project/python-protocol-gateway/)
 [![CodeQL](https://github.com/HotNoob/PythonProtocolGateway/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/HotNoob/PythonProtocolGateway/actions/workflows/github-code-scanning/codeql)
 
 For advanced configuration help, please checkout the documentation :)
@@ -111,6 +112,9 @@ once installed; the device should show up on home assistant under mqtt
 more docs on setting up mqtt here: https://www.home-assistant.io/integrations/mqtt
 i probably might have missed something. ha is new to me.
 
+#### connect mqtt on home assistant with external mqtt broker
+[HowTo Connect External MQTT Broker To HomeAssistant](https://www.youtube.com/watch?v=sP2gYLYQat8)
+
 ### general update procedure
 update files and restart script / service
 ```
@@ -147,10 +151,6 @@ variable_to_exclude2
 As i dive deeper into solar monitoring and general automation, i've come to the realization that ModBus RTU is the "standard" and basically... everything uses it. With how this is setup, it can be used with basically anything running ModBus RTU so long as you have the documentation. 
 
 So... don't mind me as i may add other devices such as battery bms' and... i have a home energy monitor on the way! so i'll be adding that when it arrives.
-
-### Rebranding Again... last time.
-if you installed this when it was called growatt2mqtt-hotnoob or InverterModBusToMQTT, you'll need to reinstall if you want to update. 
-
 
 ### donate
 this took me a while to make; and i had to make it because there werent any working solutions. 

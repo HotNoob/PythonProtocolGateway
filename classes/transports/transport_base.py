@@ -1,5 +1,5 @@
-from enum import Enum
 import logging
+from enum import Enum
 from typing import TYPE_CHECKING, Callable
 
 from classes.protocol_settings import (
@@ -62,7 +62,7 @@ class transport_base:
     device_model : str = "hotnoob"
     device_identifier : str = "hotnoob"
     bridge : str = ""
-    
+
     write_enabled : bool = False
     ''' deprecated -- use / move to write_mode'''
     write_mode : TransportWriteMode = None
@@ -112,10 +112,7 @@ class transport_base:
             #must load after settings
             self.protocol_version = settings.get("protocol_version")
             if self.protocol_version:
-                # Create a unique protocol settings instance for each transport to avoid shared state
-                unique_id = f"{self.transport_name}_{self.protocol_version}"
-                self._log.debug(f"Creating protocol settings with unique_id: {unique_id}")
-                self.protocolSettings = protocol_settings(self.protocol_version, transport_settings=settings, unique_id=unique_id)
+                self.protocolSettings = protocol_settings(self.protocol_version, transport_settings=settings)
 
                 if self.protocolSettings:
                     self.protocol_version = self.protocolSettings.protocol

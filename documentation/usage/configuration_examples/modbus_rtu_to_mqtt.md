@@ -1,3 +1,6 @@
+![ppg modbus flow drawio](https://github.com/user-attachments/assets/d9d59dc3-2a0a-4b34-8db7-ac054dccc67e)
+
+
 ### ModBus RTU to MQTT
 ```
 [general]

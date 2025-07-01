@@ -37,10 +37,20 @@ For ambigious sensitive protocols/transports such as ModBus, a safety mechanism 
 
 In order to write, the configuration csv file must be at least 90% verifiable. Alternatively a manual verification method will be implemented in the future. This mainly entails that the current values in the writeable register ( probably holding ), be within the value range specified in the csv. 
 
-Finally, to enable writing for a transport:
-```
-write_enabled = true
-```
+
+#### Write Safety Modes
+``` write = false ```
+default value; writting is disabled
+
+``` write = true ```
+default "write" behaviour; includes all validations / safties.
+
+```write = relaxed ``` ( dangerous - make sure you have the right protocol )
+ skips the initial ( score % ) / bulk validation
+
+``` write = unsafe ``` ( very dangerous )
+skips all write safties. 
+
 
 Finally, to write, "read" data on any bridged transport. In most cases this will likely be MQTT. 
 

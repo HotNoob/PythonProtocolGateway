@@ -1,18 +1,16 @@
 [general]
+# Global logging level (DEBUG, INFO, WARNING, ERROR)
 log_level = DEBUG
 
 [transport.0] #name must be unique, ie: transport.modbus
-#logging level for transport
+# Logging level specific to this transport
 log_level = DEBUG
 
 #rs485 / modbus device
 #protocol config files are located in protocols/
 protocol_version = v0.14
-analyze_protocol = false
-write = false
 
-#in
-#was unit
+# Modbus address
 address = 1
 port = {{serial port, likely /dev/ttyUSB0}}
 baudrate = 9600
@@ -20,29 +18,46 @@ baudrate = 9600
 #modbus tcp/tls/udp example
 #host = 192.168.0.7
 #port = 502
-#override protocol reader
+#override protocol's / transport type
 #transport = modbus_tcp
 
-#the 'transport' that we want to share this with
+# The 'transport' that we want to share this with
 bridge = transport.1
 
+# Device identity (for MQTT topic structure or HA discovery)
 manufacturer = HDHK
 model = HDHK 16CH AC
-#optional; leave blank to autofetch serial from device
+# Optional; auto-detect if omitted
 serial_number = HDHK777
 
+# How often read (in seconds)
+# interplays with per register read timings: https://github.com/HotNoob/PythonProtocolGateway/blob/main/documentation/usage/creating_and_editing_protocols.md#read-interval
 read_interval = 10
 
+#advanced users only - see https://github.com/HotNoob/PythonProtocolGateway/blob/main/documentation/usage/transports.md#writing
+write = false
+
+# incomplete feature to help identify which protocol to use
+# will only "analyze" if enabled
+analyze_protocol = false
 
 [transport.1]
-#connect mqtt
+# Set transport type to MQTT
 transport=mqtt
+
+# MQTT broker settings
 host = {{mqtt ip / host}}
 port = 1883
 user = {{mqtt username here}}
 pass = {{mqtt password}}
+
+# MQTT topic settings
 base_topic = home/inverter/
 error_topic = /error
-json = false
+
+# Home Assistant discovery settings
 discovery_enabled = true
 discovery_topic = homeassistant
+
+# If true, values are sent in JSON format
+json = false
