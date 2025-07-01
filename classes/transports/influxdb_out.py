@@ -345,7 +345,9 @@ class influxdb_out(transport_base):
         return self._check_connection()
 
     def write_data(self, data: dict[str, str], from_transport: transport_base):
-        """Write data to InfluxDB"""
+        # Promote LCDMachineModelCode to device_model if present and meaningful
+        if "LCDMachineModelCode" in data and data["LCDMachineModelCode"] and data["LCDMachineModelCode"] != "hotnoob":
+            from_transport.device_model = data["LCDMachineModelCode"]
         if not self.write_enabled:
             return
 
@@ -363,7 +365,9 @@ class influxdb_out(transport_base):
         self._process_and_write_data(data, from_transport)
 
     def _process_and_store_data(self, data: dict[str, str], from_transport: transport_base):
-        """Process data and store in backlog when not connected"""
+        # Promote LCDMachineModelCode to device_model if present and meaningful
+        if "LCDMachineModelCode" in data and data["LCDMachineModelCode"] and data["LCDMachineModelCode"] != "hotnoob":
+            from_transport.device_model = data["LCDMachineModelCode"]
         if not self.enable_persistent_storage:
             self._log.warning("Persistent storage disabled, data will be lost")
             return
@@ -384,7 +388,9 @@ class influxdb_out(transport_base):
             self._flush_batch()
 
     def _process_and_write_data(self, data: dict[str, str], from_transport: transport_base):
-        """Process data and write to InfluxDB when connected"""
+        # Promote LCDMachineModelCode to device_model if present and meaningful
+        if "LCDMachineModelCode" in data and data["LCDMachineModelCode"] and data["LCDMachineModelCode"] != "hotnoob":
+            from_transport.device_model = data["LCDMachineModelCode"]
         # Prepare tags for InfluxDB
         tags = {}
         
