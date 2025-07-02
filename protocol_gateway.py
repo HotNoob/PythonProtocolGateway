@@ -326,7 +326,7 @@ class Protocol_Gateway:
                         # Clean up previous transport if it exists
                         if i > 0:
                             prev_transport = ready_transports[i-1]
-                            self.__log.debug(f"Cleaning up previous transport {prev_transport.transport_name}")
+                            self.__log.info(f"Cleaning up previous transport {prev_transport.transport_name}")
                             prev_transport.cleanup()
                         
                         # Process current transport
@@ -340,7 +340,7 @@ class Protocol_Gateway:
                     # Clean up the last transport after processing
                     if ready_transports:
                         last_transport = ready_transports[-1]
-                        self.__log.debug(f"Cleaning up final transport {last_transport.transport_name}")
+                        self.__log.info(f"Cleaning up final transport {last_transport.transport_name}")
                         last_transport.cleanup()
                     
                     # Log completion status for sequential mode

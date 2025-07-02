@@ -420,7 +420,7 @@ class modbus_base(transport_base):
     def cleanup(self):
         """Clean up transport resources and close connections"""
         with self._transport_lock:
-            self._log.debug(f"Cleaning up transport {self.transport_name}")
+            self._log.info(f"Cleaning up transport {self.transport_name}")
             
             # Close the modbus client connection
             port_identifier = self._get_port_identifier()
