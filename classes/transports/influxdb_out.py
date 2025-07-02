@@ -546,16 +546,41 @@ class influxdb_out(transport_base):
         try:
             self.client.write_points(self.batch_points)
             
-            # Log serial numbers if debug level is enabled
+            # Log serial numbers and sample values if debug level is enabled
             if self._log.isEnabledFor(logging.DEBUG):
                 serial_numbers = []
+                sample_values = []
                 for point in self.batch_points:
+                    # Get serial number
                     if 'tags' in point and 'device_serial_number' in point['tags']:
                         serial_numbers.append(point['tags']['device_serial_number'])
                     else:
                         serial_numbers.append('None')
+                    
+                    # Get sample field values
+                    if 'fields' in point:
+                        fields = point['fields']
+                        sample_data = {}
+                        for field_name in ['vacr', 'soc', 'fwcode', 'vbat', 'pinv']:
+                            if field_name in fields:
+                                sample_data[field_name] = fields[field_name]
+                        if sample_data:
+                            sample_values.append(sample_data)
+                        else:
+                            sample_values.append('No sample fields found')
+                    else:
+                        sample_values.append('No fields found')
+                
                 serial_list = ', '.join(serial_numbers)
                 self._log.info(f"Wrote {len(self.batch_points)} points to InfluxDB (serial numbers: {serial_list})")
+                
+                # Log sample values for each point
+                for i, (serial, samples) in enumerate(zip(serial_numbers, sample_values)):
+                    if isinstance(samples, dict):
+                        sample_str = ', '.join([f"{k}={v}" for k, v in samples.items()])
+                        self._log.debug(f"  Point {i+1} ({serial}): {sample_str}")
+                    else:
+                        self._log.debug(f"  Point {i+1} ({serial}): {samples}")
             else:
                 self._log.info(f"Wrote {len(self.batch_points)} points to InfluxDB")
             
@@ -569,16 +594,41 @@ class influxdb_out(transport_base):
                 try:
                     self.client.write_points(self.batch_points)
                     
-                    # Log serial numbers if debug level is enabled
+                    # Log serial numbers and sample values if debug level is enabled
                     if self._log.isEnabledFor(logging.DEBUG):
                         serial_numbers = []
+                        sample_values = []
                         for point in self.batch_points:
+                            # Get serial number
                             if 'tags' in point and 'device_serial_number' in point['tags']:
                                 serial_numbers.append(point['tags']['device_serial_number'])
                             else:
                                 serial_numbers.append('None')
+                            
+                            # Get sample field values
+                            if 'fields' in point:
+                                fields = point['fields']
+                                sample_data = {}
+                                for field_name in ['vacr', 'soc', 'fwcode', 'vbat', 'pinv']:
+                                    if field_name in fields:
+                                        sample_data[field_name] = fields[field_name]
+                                if sample_data:
+                                    sample_values.append(sample_data)
+                                else:
+                                    sample_values.append('No sample fields found')
+                            else:
+                                sample_values.append('No fields found')
+                        
                         serial_list = ', '.join(serial_numbers)
                         self._log.info(f"Successfully wrote {len(self.batch_points)} points to InfluxDB after reconnection (serial numbers: {serial_list})")
+                        
+                        # Log sample values for each point
+                        for i, (serial, samples) in enumerate(zip(serial_numbers, sample_values)):
+                            if isinstance(samples, dict):
+                                sample_str = ', '.join([f"{k}={v}" for k, v in samples.items()])
+                                self._log.debug(f"  Point {i+1} ({serial}): {sample_str}")
+                            else:
+                                self._log.debug(f"  Point {i+1} ({serial}): {samples}")
                     else:
                         self._log.info(f"Successfully wrote {len(self.batch_points)} points to InfluxDB after reconnection")
                     
