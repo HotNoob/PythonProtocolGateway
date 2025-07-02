@@ -798,6 +798,11 @@ class protocol_settings:
             except ValueError:
                 pass
 
+        # Debug: log the parameters
+        import logging
+        log = logging.getLogger(__name__)
+        log.info(f"calculate_registry_ranges: max_register={max_register}, max_batch_size={max_batch_size}, map_size={len(map)}, init={init}")
+
         start = -max_batch_size
         ranges : list[tuple] = []
 
@@ -875,6 +880,7 @@ class protocol_settings:
                 size = item.register
 
         self.registry_map_size[registry_type] = size
+        self._log.info(f"load_registry_map: {registry_type.name} - loaded {len(self.registry_map[registry_type])} entries, max_register={size}")
         self.registry_map_ranges[registry_type] = self.calculate_registry_ranges(self.registry_map[registry_type], self.registry_map_size[registry_type], init=True)
 
     def process_register_bytes(self, registry : dict[int,bytes], entry : registry_map_entry):

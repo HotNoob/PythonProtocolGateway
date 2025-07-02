@@ -1003,7 +1003,7 @@ class modbus_base(transport_base):
                     if hasattr(register, 'function_code') and hasattr(register, 'exception_code'):
                         exception_code = register.function_code | 0x80  # Convert to exception response code
                         interpreted_error = interpret_modbus_exception_code(exception_code)
-                        self._log.error(f"{error_msg} - {interpreted_error}")
+                        self._log.debug(f"{error_msg} - {interpreted_error}")
                     else:
                         self._log.error(error_msg)
                 
