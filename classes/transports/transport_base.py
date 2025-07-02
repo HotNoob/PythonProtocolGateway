@@ -138,6 +138,12 @@ class transport_base:
     def connect(self):
         pass
 
+    def cleanup(self):
+        """Clean up transport resources and close connections"""
+        self._log.debug(f"Cleaning up transport {self.transport_name}")
+        # Base implementation - subclasses should override if needed
+        pass
+
     def write_data(self, data : dict[str, registry_map_entry], from_transport : "transport_base"):
         ''' general purpose write function for between transports'''
         pass

@@ -411,6 +411,32 @@ class modbus_base(transport_base):
             self.first_connect = False
             self.init_after_connect()
 
+    def cleanup(self):
+        """Clean up transport resources and close connections"""
+        with self._transport_lock:
+            self._log.debug(f"Cleaning up transport {self.transport_name}")
+            
+            # Close the modbus client connection
+            port_identifier = self._get_port_identifier()
+            if port_identifier in self.clients:
+                try:
+                    client = self.clients[port_identifier]
+                    if hasattr(client, 'close') and callable(client.close):
+                        client.close()
+                        self._log.debug(f"Closed modbus client for {self.transport_name}")
+                except Exception as e:
+                    self._log.warning(f"Error closing modbus client for {self.transport_name}: {e}")
+                
+                # Remove from shared clients dict
+                with self._clients_lock:
+                    if port_identifier in self.clients:
+                        del self.clients[port_identifier]
+                        self._log.debug(f"Removed client from shared dict for {self.transport_name}")
+            
+            # Mark as disconnected
+            self.connected = False
+            self._log.debug(f"Transport {self.transport_name} cleanup completed")
+
     def read_serial_number(self) -> str:
         # First try to read "Serial Number" from input registers (for protocols like EG4 v58)
         self._log.info("Looking for serial_number variable in input registers...")

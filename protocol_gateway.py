@@ -174,8 +174,8 @@ class Protocol_Gateway:
         ##[general]
         self.__log_level = self.__settings.get("general","log_level", fallback="INFO")
         
-        # Read concurrency setting
-        self.__disable_concurrency = self.__settings.getboolean("general", "disable_concurrency", fallback=False)
+        # Read concurrency setting - default to sequential (disabled) for better stability
+        self.__disable_concurrency = self.__settings.getboolean("general", "disable_concurrency", fallback=True)
         self.__log.info(f"Concurrency mode: {'Sequential' if self.__disable_concurrency else 'Concurrent'}")
 
         # Read sequential delay setting
@@ -319,15 +319,29 @@ class Protocol_Gateway:
                 
                 # Process transports based on concurrency setting
                 if self.__disable_concurrency:
-                    # Sequential processing - process transports one by one
+                    # Sequential processing - process transports one by one with cleanup between reads
                     for i, transport in enumerate(ready_transports):
                         self.__log.debug(f"Processing {transport.transport_name} sequentially ({i+1}/{len(ready_transports)})")
+                        
+                        # Clean up previous transport if it exists
+                        if i > 0:
+                            prev_transport = ready_transports[i-1]
+                            self.__log.debug(f"Cleaning up previous transport {prev_transport.transport_name}")
+                            prev_transport.cleanup()
+                        
+                        # Process current transport
                         self._process_transport_read(transport)
                         
                         # Add delay between transports to prevent device confusion
                         if i < len(ready_transports) - 1:  # Don't delay after the last transport
                             self.__log.debug(f"Waiting {self.__sequential_delay} seconds before next transport...")
                             time.sleep(self.__sequential_delay)
+                    
+                    # Clean up the last transport after processing
+                    if ready_transports:
+                        last_transport = ready_transports[-1]
+                        self.__log.debug(f"Cleaning up final transport {last_transport.transport_name}")
+                        last_transport.cleanup()
                     
                     # Log completion status for sequential mode
                     completion_status = self._get_read_completion_status()
@@ -348,6 +362,11 @@ class Protocol_Gateway:
                         for thread in threads:
                             thread.join()
                         
+                        # Clean up all transports after concurrent processing
+                        for transport in ready_transports:
+                            self.__log.debug(f"Cleaning up transport {transport.transport_name} after concurrent processing")
+                            transport.cleanup()
+                        
                         # Log completion status
                         completion_status = self._get_read_completion_status()
                         completed = [name for name, status in completion_status.items() if status]
@@ -356,6 +375,10 @@ class Protocol_Gateway:
                     elif len(ready_transports) == 1:
                         # Single transport - process directly
                         self._process_transport_read(ready_transports[0])
+                        
+                        # Clean up single transport
+                        self.__log.debug(f"Cleaning up single transport {ready_transports[0].transport_name}")
+                        ready_transports[0].cleanup()
 
             except Exception as err:
                 traceback.print_exc()

@@ -585,13 +585,19 @@ class influxdb_out(transport_base):
                     if 'fields' in point:
                         fields = point['fields']
                         sample_data = {}
-                        for field_name in ['vacr', 'soc', 'fwcode', 'vbat', 'pinv']:
+                        for field_name in ['vacr', 'VacR', 'soc', 'SOC', 'fwcode', 'FWCode', 'vbat', 'Vbat', 'pinv', 'Pinv']:
                             if field_name in fields:
                                 sample_data[field_name] = fields[field_name]
                         if sample_data:
                             sample_values.append(sample_data)
                         else:
-                            sample_values.append('No sample fields found')
+                            # Debug: Log all available fields when sample fields are not found
+                            if len(fields) > 0:
+                                # Show first 10 field names to help identify the correct names
+                                field_names = list(fields.keys())[:10]
+                                sample_values.append(f'No sample fields found. Available fields: {field_names}')
+                            else:
+                                sample_values.append('No fields found')
                     else:
                         sample_values.append('No fields found')
                 
@@ -647,7 +653,13 @@ class influxdb_out(transport_base):
                                 if sample_data:
                                     sample_values.append(sample_data)
                                 else:
-                                    sample_values.append('No sample fields found')
+                                    # Debug: Log all available fields when sample fields are not found
+                                    if len(fields) > 0:
+                                        # Show first 10 field names to help identify the correct names
+                                        field_names = list(fields.keys())[:10]
+                                        sample_values.append(f'No sample fields found. Available fields: {field_names}')
+                                    else:
+                                        sample_values.append('No fields found')
                             else:
                                 sample_values.append('No fields found')
                         
