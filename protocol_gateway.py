@@ -247,27 +247,35 @@ class Protocol_Gateway:
     def _process_transport_read(self, transport):
         """Process a single transport read operation"""
         try:
+            # Always ensure transport is connected before reading
             if not transport.connected:
-                transport.connect() #reconnect
-            else: #transport is connected
-                self.__log.debug(f"Starting read cycle for {transport.transport_name}")
-                info = transport.read_data()
+                self.__log.info(f"Transport {transport.transport_name} not connected, connecting...")
+                transport.connect()
+            
+            # Force reconnection if transport was recently cleaned up
+            if hasattr(transport, '_needs_reconnection') and transport._needs_reconnection:
+                self.__log.info(f"Transport {transport.transport_name} needs reconnection, connecting...")
+                transport.connect()
+                transport._needs_reconnection = False
+            
+            self.__log.debug(f"Starting read cycle for {transport.transport_name}")
+            info = transport.read_data()
 
-                if not info:
-                    self.__log.warning(f"Transport {transport.transport_name} completed read cycle with NO DATA - this may indicate a device issue")
-                    self._mark_read_complete(transport)
-                    return
-
-                self.__log.debug(f"Transport {transport.transport_name} completed read cycle with {len(info)} fields")
-                
-                # Write to output transports immediately (as before)
-                if transport.bridge:
-                    for to_transport in self.__transports:
-                        if to_transport.transport_name == transport.bridge:
-                            to_transport.write_data(info, transport)
-                            break
-                
+            if not info:
+                self.__log.warning(f"Transport {transport.transport_name} completed read cycle with NO DATA - this may indicate a device issue")
                 self._mark_read_complete(transport)
+                return
+
+            self.__log.debug(f"Transport {transport.transport_name} completed read cycle with {len(info)} fields")
+            
+            # Write to output transports immediately (as before)
+            if transport.bridge:
+                for to_transport in self.__transports:
+                    if to_transport.transport_name == transport.bridge:
+                        to_transport.write_data(info, transport)
+                        break
+            
+            self._mark_read_complete(transport)
                 
         except Exception as err:
             self.__log.error(f"Error processing transport {transport.transport_name}: {err}")

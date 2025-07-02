@@ -183,6 +183,7 @@ class modbus_base(transport_base):
         self.analyze_protocol_enabled : bool = False
         self.analyze_protocol_save_load : bool = False
         self.first_connect : bool = True
+        self._needs_reconnection : bool = False
         
         self.send_holding_register : bool = True
         self.send_input_register : bool = True
@@ -416,6 +417,10 @@ class modbus_base(transport_base):
             # The actual connection is handled by subclasses (e.g., modbus_rtu)
             # We just need to reinitialize after connection
             self.init_after_connect()
+        
+        # Reset reconnection flag after successful connection
+        if self.connected:
+            self._needs_reconnection = False
 
     def cleanup(self):
         """Clean up transport resources and close connections"""
@@ -442,6 +447,7 @@ class modbus_base(transport_base):
             # Mark as disconnected and reset first_connect for reconnection
             self.connected = False
             self.first_connect = False  # Reset so reconnection works properly
+            self._needs_reconnection = True  # Flag that this transport needs reconnection
             self._log.info(f"Transport {self.transport_name} cleanup completed")
 
     def read_serial_number(self) -> str:

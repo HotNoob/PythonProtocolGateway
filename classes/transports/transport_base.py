@@ -73,6 +73,7 @@ class transport_base:
     last_read_time : float = 0
 
     connected : bool = False
+    _needs_reconnection : bool = False
 
     on_message : Callable[["transport_base", registry_map_entry, str], None] = None
     ''' callback, on message recieved '''
@@ -142,6 +143,8 @@ class transport_base:
         """Clean up transport resources and close connections"""
         self._log.debug(f"Cleaning up transport {self.transport_name}")
         # Base implementation - subclasses should override if needed
+        # Mark that this transport needs reconnection
+        self._needs_reconnection = True
         pass
 
     def write_data(self, data : dict[str, registry_map_entry], from_transport : "transport_base"):
