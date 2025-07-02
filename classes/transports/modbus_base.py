@@ -421,6 +421,13 @@ class modbus_base(transport_base):
         # Reset reconnection flag after successful connection
         if self.connected:
             self._needs_reconnection = False
+            
+            # Reset protocol settings timestamps to ensure fresh reading
+            if hasattr(self, 'protocolSettings') and self.protocolSettings:
+                for registry_type in [Registry_Type.INPUT, Registry_Type.HOLDING]:
+                    if registry_type in self.protocolSettings.registry_map:
+                        for entry in self.protocolSettings.registry_map[registry_type]:
+                            entry.next_read_timestamp = 0
 
     def cleanup(self):
         """Clean up transport resources and close connections"""
@@ -570,6 +577,20 @@ class modbus_base(transport_base):
                                                                          timestamp=self.last_read_time)
 
                 self._log.info(f"Reading {registry_type.name} registers for {self.transport_name}: {len(ranges)} ranges")
+                if len(ranges) == 0:
+                    self._log.warning(f"No register ranges calculated for {self.transport_name} {registry_type.name}")
+                    # Debug: show protocol settings info
+                    if hasattr(self, 'protocolSettings') and self.protocolSettings:
+                        total_entries = len(self.protocolSettings.registry_map.get(registry_type, []))
+                        self._log.info(f"Protocol settings for {self.transport_name}: {total_entries} total entries for {registry_type.name}")
+                        
+                        # Count entries that would be read
+                        readable_entries = 0
+                        for entry in self.protocolSettings.registry_map.get(registry_type, []):
+                            if entry.write_mode != WriteMode.READDISABLED and entry.write_mode != WriteMode.WRITEONLY:
+                                readable_entries += 1
+                        self._log.info(f"Readable entries for {self.transport_name} {registry_type.name}: {readable_entries}")
+                
                 registry = self.read_modbus_registers(ranges=ranges, registry_type=registry_type)
                 
                 if registry:
