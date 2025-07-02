@@ -569,7 +569,14 @@ class modbus_base(transport_base):
                                                                          self.protocolSettings.registry_map_size[registry_type],
                                                                          timestamp=self.last_read_time)
 
+                self._log.info(f"Reading {registry_type.name} registers for {self.transport_name}: {len(ranges)} ranges")
                 registry = self.read_modbus_registers(ranges=ranges, registry_type=registry_type)
+                
+                if registry:
+                    self._log.info(f"Got registry data for {self.transport_name} {registry_type.name}: {len(registry)} registers")
+                else:
+                    self._log.warning(f"No registry data returned for {self.transport_name} {registry_type.name}")
+                
                 new_info = self.protocolSettings.process_registery(registry, self.protocolSettings.get_registry_map(registry_type))
 
                 if False:
@@ -956,7 +963,7 @@ class modbus_base(transport_base):
                 register = self.read_registers(range[0], range[1], registry_type=registry_type)
 
             except ModbusIOException as e:
-                self._log.error("ModbusIOException: " + str(e))
+                self._log.error(f"ModbusIOException for {self.transport_name}: " + str(e))
                 # In pymodbus 3.7+, ModbusIOException doesn't have error_code attribute
                 # Treat all ModbusIOException as retryable errors
                 isError = True

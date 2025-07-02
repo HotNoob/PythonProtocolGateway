@@ -113,5 +113,7 @@ class modbus_rtu(modbus_base):
 
     def connect(self):
         self.connected = self.client.connect()
-        self._log.debug(f"Modbus rtu connected: {self.connected}")
+        self._log.info(f"Modbus rtu connected: {self.connected} for {self.transport_name} on port {self.port}")
+        if not self.connected:
+            self._log.error(f"Failed to connect to {self.transport_name} on port {self.port}")
         super().connect()
