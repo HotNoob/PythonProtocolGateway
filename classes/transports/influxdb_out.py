@@ -355,6 +355,10 @@ class influxdb_out(transport_base):
         if not self.write_enabled:
             return
 
+        # Debug logging to track transport data flow
+        if self._log.isEnabledFor(logging.DEBUG):
+            self._log.debug(f"Received data from {from_transport.transport_name} (serial: {from_transport.device_serial_number}) with {len(data)} fields")
+
         # Check connection status before processing data
         if not self._check_connection():
             self._log.warning("Not connected to InfluxDB, storing data in backlog")

@@ -369,14 +369,20 @@ class modbus_base(transport_base):
         self._log.info(f"Manually enabled register range {registry_type.name} {register_range[0]}-{register_range[1]}")
 
     def init_after_connect(self):
-        #from transport_base settings
-        if self.write_enabled:
-            self.enable_write()
+        # Use transport lock to prevent concurrent access during initialization
+        with self._transport_lock:
+            #from transport_base settings
+            if self.write_enabled:
+                self.enable_write()
 
-        #if sn is empty, attempt to autoread it
-        if not self.device_serial_number:
-            self.device_serial_number = self.read_serial_number()
-            self.update_identifier()
+            #if sn is empty, attempt to autoread it
+            if not self.device_serial_number:
+                self._log.info(f"Reading serial number for transport {self.transport_name} on port {getattr(self, 'port', 'unknown')}")
+                self.device_serial_number = self.read_serial_number()
+                self._log.info(f"Transport {self.transport_name} serial number: {self.device_serial_number}")
+                self.update_identifier()
+            else:
+                self._log.debug(f"Transport {self.transport_name} already has serial number: {self.device_serial_number}")
 
     def connect(self):
         if self.connected and self.first_connect:
