@@ -80,7 +80,13 @@ class CustomConfigParser(ConfigParser):
         if isinstance(value, float):
             return value
 
-        return value.strip() if value is not None else value
+        if value is not None:
+            # Strip leading/trailing whitespace and inline comments
+            value = value.strip()
+            # Remove inline comments (everything after #)
+            if '#' in value:
+                value = value.split('#')[0].strip()
+        return value
 
     def getint(self, section, option, *args, **kwargs): #bypass fallback bug
         value = self.get(section, option, *args, **kwargs)
