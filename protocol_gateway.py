@@ -90,6 +90,22 @@ class CustomConfigParser(ConfigParser):
         value = self.get(section, option, *args, **kwargs)
         return float(value) if value is not None else None
 
+    def getboolean(self, section, option, *args, **kwargs): #bypass fallback bug and handle case-insensitive boolean values
+        value = self.get(section, option, *args, **kwargs)
+        if value is None:
+            return None
+        
+        # Convert to string and handle case-insensitive boolean values
+        value_str = str(value).lower().strip()
+        
+        # Handle various boolean representations
+        if value_str in ('true', 'yes', 'on', '1', 'enable', 'enabled'):
+            return True
+        elif value_str in ('false', 'no', 'off', '0', 'disable', 'disabled'):
+            return False
+        else:
+            raise ValueError(f'Not a boolean: {value}')
+
 
 class Protocol_Gateway:
     """
