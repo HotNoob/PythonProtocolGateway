@@ -106,6 +106,11 @@ class Protocol_Gateway:
     ''' transport_base is for type hinting. this can be any transport'''
 
     config_file : str
+    
+    # Simple read completion tracking
+    __read_completion_tracker : dict[str, bool] = {}
+    ''' Track which transports have completed their current read cycle '''
+    __read_tracker_lock : threading.Lock = None
 
     def __init__(self, config_file : str):
         self.__log = logging.getLogger("invertermodbustomqqt_log")
@@ -179,7 +184,12 @@ class Protocol_Gateway:
                 if to_transport.bridge == from_transport.transport_name:
                     to_transport.init_bridge(from_transport)
                     from_transport.init_bridge(to_transport)
-
+        
+        # Initialize read completion tracking
+        self.__read_tracker_lock = threading.Lock()
+        for transport in self.__transports:
+            if transport.read_interval > 0:
+                self.__read_completion_tracker[transport.transport_name] = False
 
     def on_message(self, transport : transport_base, entry : registry_map_entry, data : str):
         ''' message recieved from a transport! '''
@@ -195,20 +205,46 @@ class Protocol_Gateway:
             if not transport.connected:
                 transport.connect() #reconnect
             else: #transport is connected
+                self.__log.debug(f"Starting read cycle for {transport.transport_name}")
                 info = transport.read_data()
 
                 if not info:
+                    self.__log.debug(f"Transport {transport.transport_name} completed read cycle (no data)")
+                    self._mark_read_complete(transport)
                     return
 
-                #todo. broadcast option
+                self.__log.debug(f"Transport {transport.transport_name} completed read cycle with {len(info)} fields")
+                
+                # Write to output transports immediately (as before)
                 if transport.bridge:
                     for to_transport in self.__transports:
                         if to_transport.transport_name == transport.bridge:
                             to_transport.write_data(info, transport)
                             break
+                
+                self._mark_read_complete(transport)
+                
         except Exception as err:
             self.__log.error(f"Error processing transport {transport.transport_name}: {err}")
             traceback.print_exc()
+            self._mark_read_complete(transport)
+
+    def _mark_read_complete(self, transport):
+        """Mark a transport as having completed its read cycle"""
+        with self.__read_tracker_lock:
+            self.__read_completion_tracker[transport.transport_name] = True
+            self.__log.debug(f"Marked {transport.transport_name} read cycle as complete")
+
+    def _reset_read_completion_tracker(self):
+        """Reset the read completion tracker for the next cycle"""
+        with self.__read_tracker_lock:
+            for transport_name in self.__read_completion_tracker:
+                self.__read_completion_tracker[transport_name] = False
+
+    def _get_read_completion_status(self):
+        """Get the current read completion status for debugging"""
+        with self.__read_tracker_lock:
+            return self.__read_completion_tracker.copy()
 
     def run(self):
         """
@@ -231,6 +267,11 @@ class Protocol_Gateway:
                         transport.last_read_time = now
                         ready_transports.append(transport)
                 
+                # Reset read completion tracker for this cycle
+                if ready_transports:
+                    self._reset_read_completion_tracker()
+                    self.__log.debug(f"Starting read cycle for {len(ready_transports)} transports: {[t.transport_name for t in ready_transports]}")
+                
                 # Dispatch reads concurrently if multiple transports are ready
                 if len(ready_transports) > 1:
                     threads = []
@@ -243,6 +284,12 @@ class Protocol_Gateway:
                     # Wait for all threads to complete
                     for thread in threads:
                         thread.join()
+                    
+                    # Log completion status
+                    completion_status = self._get_read_completion_status()
+                    completed = [name for name, status in completion_status.items() if status]
+                    self.__log.debug(f"Read cycle completed. Completed transports: {completed}")
+                    
                 elif len(ready_transports) == 1:
                     # Single transport - process directly
                     self._process_transport_read(ready_transports[0])
