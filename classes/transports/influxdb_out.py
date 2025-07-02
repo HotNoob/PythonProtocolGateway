@@ -6,6 +6,7 @@ from configparser import SectionProxy
 from typing import TextIO
 import time
 import logging
+import threading
 
 from defs.common import strtobool
 
@@ -46,7 +47,6 @@ class influxdb_out(transport_base):
     periodic_reconnect_interval: float = 14400.0  # 4 hours in seconds
     
     client = None
-    batch_points = []
     last_batch_time = 0
     last_connection_check = 0
     connection_check_interval = 300  # Check connection every 300 seconds
@@ -91,6 +91,10 @@ class influxdb_out(transport_base):
         
         self.write_enabled = True  # InfluxDB output is always write-enabled
         super().__init__(settings)
+        
+        # Initialize instance variables for thread safety
+        self.batch_points = []
+        self._batch_lock = threading.Lock()
         
         # Initialize persistent storage
         if self.enable_persistent_storage:
@@ -379,13 +383,14 @@ class influxdb_out(transport_base):
         self._add_to_backlog(point)
         
         # Also add to current batch for immediate flush when reconnected
-        self.batch_points.append(point)
-        
-        current_time = time.time()
-        if (len(self.batch_points) >= self.batch_size or 
-            (current_time - self.last_batch_time) >= self.batch_timeout):
-            # self._log.debug(f"Flushing batch to backlog: size={len(self.batch_points)}")  # Suppressed debug message
-            self._flush_batch()
+        with self._batch_lock:
+            self.batch_points.append(point)
+            
+            current_time = time.time()
+            if (len(self.batch_points) >= self.batch_size or 
+                (current_time - self.last_batch_time) >= self.batch_timeout):
+                # self._log.debug(f"Flushing batch to backlog: size={len(self.batch_points)}")  # Suppressed debug message
+                self._flush_batch()
 
     def _process_and_write_data(self, data: dict[str, str], from_transport: transport_base):
         # Promote LCDMachineModelCode to device_model if present and meaningful
@@ -449,16 +454,17 @@ class influxdb_out(transport_base):
         # Create InfluxDB point
         point = self._create_influxdb_point(data, from_transport)
         
-        # Add to batch
-        self.batch_points.append(point)
-        # self._log.debug(f"Added point to batch. Batch size: {len(self.batch_points)}")  # Suppressed debug message
-        
-        # Check if we should flush the batch
-        current_time = time.time()
-        if (len(self.batch_points) >= self.batch_size or 
-            (current_time - self.last_batch_time) >= self.batch_timeout):
-            # self._log.debug(f"Flushing batch: size={len(self.batch_points)}, timeout={current_time - self.last_batch_time:.1f}s")  # Suppressed debug message
-            self._flush_batch()
+        # Add to batch with thread safety
+        with self._batch_lock:
+            self.batch_points.append(point)
+            # self._log.debug(f"Added point to batch. Batch size: {len(self.batch_points)}")  # Suppressed debug message
+            
+            # Check if we should flush the batch
+            current_time = time.time()
+            if (len(self.batch_points) >= self.batch_size or 
+                (current_time - self.last_batch_time) >= self.batch_timeout):
+                # self._log.debug(f"Flushing batch: size={len(self.batch_points)}, timeout={current_time - self.last_batch_time:.1f}s")  # Suppressed debug message
+                self._flush_batch()
 
     def _create_influxdb_point(self, data: dict[str, str], from_transport: transport_base):
         """Create an InfluxDB point from data"""
@@ -531,26 +537,30 @@ class influxdb_out(transport_base):
 
     def _flush_batch(self):
         """Flush the batch of points to InfluxDB"""
-        if not self.batch_points:
-            return
+        with self._batch_lock:
+            if not self.batch_points:
+                return
+                
+            # Get a copy of the batch points and clear the list
+            points_to_write = self.batch_points.copy()
+            self.batch_points = []
             
         # Check connection before attempting to write
         if not self._check_connection():
             self._log.warning("Not connected to InfluxDB, storing batch in backlog")
             # Store all points in backlog
-            for point in self.batch_points:
+            for point in points_to_write:
                 self._add_to_backlog(point)
-            self.batch_points = []
             return
             
         try:
-            self.client.write_points(self.batch_points)
+            self.client.write_points(points_to_write)
             
             # Log serial numbers and sample values if debug level is enabled
             if self._log.isEnabledFor(logging.DEBUG):
                 serial_numbers = []
                 sample_values = []
-                for point in self.batch_points:
+                for point in points_to_write:
                     # Get serial number
                     if 'tags' in point and 'device_serial_number' in point['tags']:
                         serial_numbers.append(point['tags']['device_serial_number'])
@@ -572,7 +582,7 @@ class influxdb_out(transport_base):
                         sample_values.append('No fields found')
                 
                 serial_list = ', '.join(serial_numbers)
-                self._log.info(f"Wrote {len(self.batch_points)} points to InfluxDB (serial numbers: {serial_list})")
+                self._log.info(f"Wrote {len(points_to_write)} points to InfluxDB (serial numbers: {serial_list})")
                 
                 # Log sample values for each point
                 for i, (serial, samples) in enumerate(zip(serial_numbers, sample_values)):
@@ -582,9 +592,8 @@ class influxdb_out(transport_base):
                     else:
                         self._log.debug(f"  Point {i+1} ({serial}): {samples}")
             else:
-                self._log.info(f"Wrote {len(self.batch_points)} points to InfluxDB")
+                self._log.info(f"Wrote {len(points_to_write)} points to InfluxDB")
             
-            self.batch_points = []
             self.last_batch_time = time.time()
         except Exception as e:
             self._log.error(f"Failed to write batch to InfluxDB: {e}")
@@ -592,13 +601,13 @@ class influxdb_out(transport_base):
             if self._attempt_reconnect():
                 # If reconnection successful, try to write again
                 try:
-                    self.client.write_points(self.batch_points)
+                    self.client.write_points(points_to_write)
                     
                     # Log serial numbers and sample values if debug level is enabled
                     if self._log.isEnabledFor(logging.DEBUG):
                         serial_numbers = []
                         sample_values = []
-                        for point in self.batch_points:
+                        for point in points_to_write:
                             # Get serial number
                             if 'tags' in point and 'device_serial_number' in point['tags']:
                                 serial_numbers.append(point['tags']['device_serial_number'])
@@ -620,7 +629,7 @@ class influxdb_out(transport_base):
                                 sample_values.append('No fields found')
                         
                         serial_list = ', '.join(serial_numbers)
-                        self._log.info(f"Successfully wrote {len(self.batch_points)} points to InfluxDB after reconnection (serial numbers: {serial_list})")
+                        self._log.info(f"Successfully wrote {len(points_to_write)} points to InfluxDB after reconnection (serial numbers: {serial_list})")
                         
                         # Log sample values for each point
                         for i, (serial, samples) in enumerate(zip(serial_numbers, sample_values)):
@@ -630,22 +639,19 @@ class influxdb_out(transport_base):
                             else:
                                 self._log.debug(f"  Point {i+1} ({serial}): {samples}")
                     else:
-                        self._log.info(f"Successfully wrote {len(self.batch_points)} points to InfluxDB after reconnection")
+                        self._log.info(f"Successfully wrote {len(points_to_write)} points to InfluxDB after reconnection")
                     
-                    self.batch_points = []
                     self.last_batch_time = time.time()
                 except Exception as retry_e:
                     self._log.error(f"Failed to write batch after reconnection: {retry_e}")
                     # Store failed points in backlog
-                    for point in self.batch_points:
+                    for point in points_to_write:
                         self._add_to_backlog(point)
-                    self.batch_points = []
                     self.connected = False
             else:
                 # Store failed points in backlog
-                for point in self.batch_points:
+                for point in points_to_write:
                     self._add_to_backlog(point)
-                self.batch_points = []
                 self.connected = False
 
     def init_bridge(self, from_transport: transport_base):
