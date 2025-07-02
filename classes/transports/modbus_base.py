@@ -406,9 +406,15 @@ class modbus_base(transport_base):
         address_info = getattr(self, 'address', 'unknown')
         self._log.info(f"Connecting to Modbus device: address={address_info}, port={port_info}")
         
-        # Continue with existing connection logic
-        if self.connected and self.first_connect:
+        # Handle first connection or reconnection
+        if self.first_connect:
             self.first_connect = False
+            self.init_after_connect()
+        elif not self.connected:
+            # Reconnection case - reinitialize after connection is established
+            self._log.debug(f"Reconnecting transport {self.transport_name}")
+            # The actual connection is handled by subclasses (e.g., modbus_rtu)
+            # We just need to reinitialize after connection
             self.init_after_connect()
 
     def cleanup(self):
@@ -433,8 +439,9 @@ class modbus_base(transport_base):
                         del self.clients[port_identifier]
                         self._log.debug(f"Removed client from shared dict for {self.transport_name}")
             
-            # Mark as disconnected
+            # Mark as disconnected and reset first_connect for reconnection
             self.connected = False
+            self.first_connect = False  # Reset so reconnection works properly
             self._log.debug(f"Transport {self.transport_name} cleanup completed")
 
     def read_serial_number(self) -> str:
