@@ -115,6 +115,10 @@ class Protocol_Gateway:
     # Concurrency control
     __disable_concurrency : bool = True
     ''' When true, transports read sequentially instead of concurrently '''
+    
+    # Transport timing control
+    __transport_delay_offset : float = 0.5
+    ''' Additional delay between different transports to prevent conflicts '''
 
     def __init__(self, config_file : str):
         self.__log = logging.getLogger("invertermodbustomqqt_log")
@@ -217,7 +221,7 @@ class Protocol_Gateway:
                 info = transport.read_data()
 
                 if not info:
-                    self.__log.debug(f"Transport {transport.transport_name} completed read cycle (no data)")
+                    self.__log.warning(f"Transport {transport.transport_name} completed read cycle with NO DATA - this may indicate a device issue")
                     self._mark_read_complete(transport)
                     return
 
@@ -283,8 +287,8 @@ class Protocol_Gateway:
                 # Process transports based on concurrency setting
                 if self.__disable_concurrency:
                     # Sequential processing - process transports one by one
-                    for transport in ready_transports:
-                        self.__log.debug(f"Processing {transport.transport_name} sequentially")
+                    for i, transport in enumerate(ready_transports):
+                        self.__log.debug(f"Processing {transport.transport_name} sequentially ({i+1}/{len(ready_transports)})")
                         self._process_transport_read(transport)
                     
                     # Log completion status for sequential mode

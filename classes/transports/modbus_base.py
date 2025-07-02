@@ -167,35 +167,31 @@ class modbus_base(transport_base):
     _client_locks : dict[str, threading.Lock] = {}
     ''' Port-specific locks to allow concurrent access to different ports '''
 
-    #non-static here for reference, type hinting, python bs ect...
-    modbus_delay_increament : float = 0.05
-    ''' delay adjustment every error. todo: add a setting for this '''
-
-    modbus_delay_setting : float = 0.85
-    '''time inbetween requests, unmodified'''
-
-    modbus_delay : float = 0.85
-    '''time inbetween requests'''
-
-    analyze_protocol_enabled : bool = False
-    analyze_protocol_save_load : bool = False
-    first_connect : bool = True
-
-    send_holding_register : bool = True
-    send_input_register : bool = True
-    
-    # Transport-specific lock
-    _transport_lock : threading.Lock = None
-    ''' Lock for this specific transport instance '''
-    
-    # Register failure tracking - make instance-specific
-    enable_register_failure_tracking: bool = True
-    max_failures_before_disable: int = 5
-    disable_duration_hours: int = 12
-
     def __init__(self, settings : "SectionProxy", protocolSettings : "protocol_settings" = None):
         super().__init__(settings)
 
+        # Initialize instance-specific variables (not class-level)
+        self.modbus_delay_increament : float = 0.05
+        ''' delay adjustment every error. todo: add a setting for this '''
+        
+        self.modbus_delay_setting : float = 0.85
+        '''time inbetween requests, unmodified'''
+        
+        self.modbus_delay : float = 0.85
+        '''time inbetween requests'''
+        
+        self.analyze_protocol_enabled : bool = False
+        self.analyze_protocol_save_load : bool = False
+        self.first_connect : bool = True
+        
+        self.send_holding_register : bool = True
+        self.send_input_register : bool = True
+        
+        # Register failure tracking - make instance-specific
+        self.enable_register_failure_tracking: bool = True
+        self.max_failures_before_disable: int = 5
+        self.disable_duration_hours: int = 12
+        
         # Initialize transport-specific lock
         self._transport_lock = threading.Lock()
         
