@@ -1,4 +1,5 @@
 import logging
+import copy
 from enum import Enum
 from typing import TYPE_CHECKING, Callable
 
@@ -113,7 +114,12 @@ class transport_base:
             #must load after settings
             self.protocol_version = settings.get("protocol_version")
             if self.protocol_version:
-                self.protocolSettings = protocol_settings(self.protocol_version, transport_settings=settings)
+                # Create a deep copy of protocol settings to avoid shared state between transports
+                original_protocol_settings = protocol_settings(self.protocol_version, transport_settings=settings)
+                self.protocolSettings = copy.deepcopy(original_protocol_settings)
+                
+                # Update the transport settings reference in the copy
+                self.protocolSettings.transport_settings = settings
 
                 if self.protocolSettings:
                     self.protocol_version = self.protocolSettings.protocol

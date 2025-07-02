@@ -434,6 +434,10 @@ class modbus_base(transport_base):
         with self._transport_lock:
             self._log.info(f"Cleaning up transport {self.transport_name}")
             
+            # Reset register timestamps to prevent sharing issues between transports
+            if hasattr(self, 'protocolSettings') and self.protocolSettings:
+                self.protocolSettings.reset_register_timestamps()
+            
             # Close the modbus client connection
             port_identifier = self._get_port_identifier()
             if port_identifier in self.clients:
