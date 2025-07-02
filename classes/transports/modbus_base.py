@@ -400,6 +400,13 @@ class modbus_base(transport_base):
                 self._log.debug(f"Transport {self.transport_name} already has serial number: {self.device_serial_number}")
 
     def connect(self):
+        """Connect to the Modbus device"""
+        # Add debugging information
+        port_info = getattr(self, 'port', 'unknown')
+        address_info = getattr(self, 'address', 'unknown')
+        self._log.info(f"Connecting to Modbus device: address={address_info}, port={port_info}")
+        
+        # Continue with existing connection logic
         if self.connected and self.first_connect:
             self.first_connect = False
             self.init_after_connect()
@@ -502,6 +509,11 @@ class modbus_base(transport_base):
     def read_data(self) -> dict[str, str]:
         # Use transport lock to prevent concurrent access to this transport instance
         with self._transport_lock:
+            # Add debugging information
+            port_info = getattr(self, 'port', 'unknown')
+            address_info = getattr(self, 'address', 'unknown')
+            self._log.debug(f"Reading data from {self.transport_name}: address={address_info}, port={port_info}")
+            
             info = {}
             #modbus - only read input/holding registries
             for registry_type in (Registry_Type.INPUT, Registry_Type.HOLDING):
