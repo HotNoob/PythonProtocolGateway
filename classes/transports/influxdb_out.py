@@ -600,11 +600,20 @@ class influxdb_out(transport_base):
                 
                 # Log sample values for each point
                 for i, (serial, samples) in enumerate(zip(serial_numbers, sample_values)):
+                    # Get transport name from point tags
+                    transport_name = 'unknown'
+                    if i < len(points_to_write) and 'tags' in points_to_write[i] and 'transport' in points_to_write[i]['tags']:
+                        transport_name = points_to_write[i]['tags']['transport']
+                    
+                    # Debug: Log the full tags for troubleshooting
+                    if i < len(points_to_write) and 'tags' in points_to_write[i]:
+                        self._log.debug(f"  Point {i+1} tags: {points_to_write[i]['tags']}")
+                    
                     if isinstance(samples, dict):
                         sample_str = ', '.join([f"{k}={v}" for k, v in samples.items()])
-                        self._log.debug(f"  Point {i+1} ({serial}): {sample_str}")
+                        self._log.debug(f"  Point {i+1} ({serial}) from {transport_name}: {sample_str}")
                     else:
-                        self._log.debug(f"  Point {i+1} ({serial}): {samples}")
+                        self._log.debug(f"  Point {i+1} ({serial}) from {transport_name}: {samples}")
             else:
                 self._log.info(f"Wrote {len(points_to_write)} points to InfluxDB")
             
@@ -647,11 +656,16 @@ class influxdb_out(transport_base):
                         
                         # Log sample values for each point
                         for i, (serial, samples) in enumerate(zip(serial_numbers, sample_values)):
+                            # Get transport name from point tags
+                            transport_name = 'unknown'
+                            if i < len(points_to_write) and 'tags' in points_to_write[i] and 'transport' in points_to_write[i]['tags']:
+                                transport_name = points_to_write[i]['tags']['transport']
+                            
                             if isinstance(samples, dict):
                                 sample_str = ', '.join([f"{k}={v}" for k, v in samples.items()])
-                                self._log.debug(f"  Point {i+1} ({serial}): {sample_str}")
+                                self._log.debug(f"  Point {i+1} ({serial}) from {transport_name}: {sample_str}")
                             else:
-                                self._log.debug(f"  Point {i+1} ({serial}): {samples}")
+                                self._log.debug(f"  Point {i+1} ({serial}) from {transport_name}: {samples}")
                     else:
                         self._log.info(f"Successfully wrote {len(points_to_write)} points to InfluxDB after reconnection")
                     
