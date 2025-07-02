@@ -2,6 +2,10 @@
 # Global logging level (DEBUG, INFO, WARNING, ERROR)
 log_level = DEBUG
 
+# Disable concurrent transport reads (true = sequential, false = concurrent)
+# When true, transports will read sequentially instead of concurrently
+disable_concurrency = true
+
 [transport.0] #name must be unique, ie: transport.modbus
 # Logging level specific to this transport
 log_level = DEBUG

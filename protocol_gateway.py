@@ -111,6 +111,10 @@ class Protocol_Gateway:
     __read_completion_tracker : dict[str, bool] = {}
     ''' Track which transports have completed their current read cycle '''
     __read_tracker_lock : threading.Lock = None
+    
+    # Concurrency control
+    __disable_concurrency : bool = True
+    ''' When true, transports read sequentially instead of concurrently '''
 
     def __init__(self, config_file : str):
         self.__log = logging.getLogger("invertermodbustomqqt_log")
@@ -137,6 +141,10 @@ class Protocol_Gateway:
 
         ##[general]
         self.__log_level = self.__settings.get("general","log_level", fallback="INFO")
+        
+        # Read concurrency setting
+        self.__disable_concurrency = self.__settings.getboolean("general", "disable_concurrency", fallback=True)
+        self.__log.info(f"Concurrency mode: {'Sequential' if self.__disable_concurrency else 'Concurrent'}")
 
         log_level = getattr(logging, self.__log_level, logging.INFO)
         self.__log.setLevel(log_level)
@@ -272,27 +280,40 @@ class Protocol_Gateway:
                     self._reset_read_completion_tracker()
                     self.__log.debug(f"Starting read cycle for {len(ready_transports)} transports: {[t.transport_name for t in ready_transports]}")
                 
-                # Dispatch reads concurrently if multiple transports are ready
-                if len(ready_transports) > 1:
-                    threads = []
+                # Process transports based on concurrency setting
+                if self.__disable_concurrency:
+                    # Sequential processing - process transports one by one
                     for transport in ready_transports:
-                        thread = threading.Thread(target=self._process_transport_read, args=(transport,))
-                        thread.daemon = True
-                        thread.start()
-                        threads.append(thread)
+                        self.__log.debug(f"Processing {transport.transport_name} sequentially")
+                        self._process_transport_read(transport)
                     
-                    # Wait for all threads to complete
-                    for thread in threads:
-                        thread.join()
-                    
-                    # Log completion status
+                    # Log completion status for sequential mode
                     completion_status = self._get_read_completion_status()
                     completed = [name for name, status in completion_status.items() if status]
-                    self.__log.debug(f"Read cycle completed. Completed transports: {completed}")
+                    self.__log.debug(f"Sequential read cycle completed. Completed transports: {completed}")
                     
-                elif len(ready_transports) == 1:
-                    # Single transport - process directly
-                    self._process_transport_read(ready_transports[0])
+                else:
+                    # Concurrent processing - process transports in parallel
+                    if len(ready_transports) > 1:
+                        threads = []
+                        for transport in ready_transports:
+                            thread = threading.Thread(target=self._process_transport_read, args=(transport,))
+                            thread.daemon = True
+                            thread.start()
+                            threads.append(thread)
+                        
+                        # Wait for all threads to complete
+                        for thread in threads:
+                            thread.join()
+                        
+                        # Log completion status
+                        completion_status = self._get_read_completion_status()
+                        completed = [name for name, status in completion_status.items() if status]
+                        self.__log.debug(f"Concurrent read cycle completed. Completed transports: {completed}")
+                        
+                    elif len(ready_transports) == 1:
+                        # Single transport - process directly
+                        self._process_transport_read(ready_transports[0])
 
             except Exception as err:
                 traceback.print_exc()
