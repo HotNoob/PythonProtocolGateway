@@ -110,39 +110,48 @@ class RegisterFailureTracker:
     last_failure_time: float = 0
     last_success_time: float = 0
     disabled_until: float = 0  # Unix timestamp when disabled until
+    _lock: threading.Lock = None
+    
+    def __post_init__(self):
+        if self._lock is None:
+            self._lock = threading.Lock()
     
     def record_failure(self, max_failures: int = 5, disable_duration_hours: int = 12):
         """Record a failed read attempt"""
-        current_time = time.time()
-        self.failure_count += 1
-        self.last_failure_time = current_time
-        
-        # If we've had enough failures, disable for specified duration
-        if self.failure_count >= max_failures:
-            self.disabled_until = current_time + (disable_duration_hours * 3600)
-            return True  # Indicates this range should be disabled
-        return False
+        with self._lock:
+            current_time = time.time()
+            self.failure_count += 1
+            self.last_failure_time = current_time
+            
+            # If we've had enough failures, disable for specified duration
+            if self.failure_count >= max_failures:
+                self.disabled_until = current_time + (disable_duration_hours * 3600)
+                return True  # Indicates this range should be disabled
+            return False
     
     def record_success(self):
         """Record a successful read attempt"""
-        current_time = time.time()
-        self.last_success_time = current_time
-        # Reset failure count on success
-        self.failure_count = 0
-        self.disabled_until = 0
+        with self._lock:
+            current_time = time.time()
+            self.last_success_time = current_time
+            # Reset failure count on success
+            self.failure_count = 0
+            self.disabled_until = 0
     
     def is_disabled(self) -> bool:
         """Check if this register range is currently disabled"""
-        if self.disabled_until == 0:
-            return False
-        return time.time() < self.disabled_until
+        with self._lock:
+            if self.disabled_until == 0:
+                return False
+            return time.time() < self.disabled_until
     
     def get_remaining_disable_time(self) -> float:
         """Get remaining time until re-enabled (0 if not disabled)"""
-        if self.disabled_until == 0:
-            return 0
-        remaining = self.disabled_until - time.time()
-        return max(0, remaining)
+        with self._lock:
+            if self.disabled_until == 0:
+                return 0
+            remaining = self.disabled_until - time.time()
+            return max(0, remaining)
 
 
 class modbus_base(transport_base):
@@ -179,8 +188,7 @@ class modbus_base(transport_base):
     _transport_lock : threading.Lock = None
     ''' Lock for this specific transport instance '''
     
-    # Register failure tracking
-    register_failure_trackers: dict[str, RegisterFailureTracker] = {}
+    # Register failure tracking - make instance-specific
     enable_register_failure_tracking: bool = True
     max_failures_before_disable: int = 5
     disable_duration_hours: int = 12
@@ -190,6 +198,10 @@ class modbus_base(transport_base):
 
         # Initialize transport-specific lock
         self._transport_lock = threading.Lock()
+        
+        # Initialize instance-specific register failure tracking
+        self.register_failure_trackers: dict[str, RegisterFailureTracker] = {}
+        self._failure_tracking_lock = threading.Lock()
 
         self.analyze_protocol_enabled = settings.getboolean("analyze_protocol", fallback=self.analyze_protocol_enabled)
         self.analyze_protocol_save_load = settings.getboolean("analyze_protocol_save_load", fallback=self.analyze_protocol_save_load)
@@ -244,13 +256,14 @@ class modbus_base(transport_base):
         """Get or create a failure tracker for a register range"""
         key = self._get_register_range_key(register_range, registry_type)
         
-        if key not in self.register_failure_trackers:
-            self.register_failure_trackers[key] = RegisterFailureTracker(
-                register_range=register_range,
-                registry_type=registry_type
-            )
-        
-        return self.register_failure_trackers[key]
+        with self._failure_tracking_lock:
+            if key not in self.register_failure_trackers:
+                self.register_failure_trackers[key] = RegisterFailureTracker(
+                    register_range=register_range,
+                    registry_type=registry_type
+                )
+            
+            return self.register_failure_trackers[key]
     
     def _record_register_read_success(self, register_range: tuple[int, int], registry_type: Registry_Type):
         """Record a successful register read"""
@@ -293,13 +306,14 @@ class modbus_base(transport_base):
         disabled_info = []
         current_time = time.time()
         
-        for tracker in self.register_failure_trackers.values():
-            if tracker.is_disabled():
-                remaining_hours = tracker.get_remaining_disable_time() / 3600
-                disabled_info.append(
-                    f"{tracker.registry_type.name} {tracker.register_range[0]}-{tracker.register_range[1]} "
-                    f"(disabled for {remaining_hours:.1f}h, {tracker.failure_count} failures)"
-                )
+        with self._failure_tracking_lock:
+            for tracker in self.register_failure_trackers.values():
+                if tracker.is_disabled():
+                    remaining_hours = tracker.get_remaining_disable_time() / 3600
+                    disabled_info.append(
+                        f"{tracker.registry_type.name} {tracker.register_range[0]}-{tracker.register_range[1]} "
+                        f"(disabled for {remaining_hours:.1f}h, {tracker.failure_count} failures)"
+                    )
         
         return disabled_info
     
@@ -309,63 +323,68 @@ class modbus_base(transport_base):
             "enabled": self.enable_register_failure_tracking,
             "max_failures_before_disable": self.max_failures_before_disable,
             "disable_duration_hours": self.disable_duration_hours,
-            "total_tracked_ranges": len(self.register_failure_trackers),
+            "total_tracked_ranges": 0,
             "disabled_ranges": [],
             "failed_ranges": [],
             "successful_ranges": []
         }
         
-        for tracker in self.register_failure_trackers.values():
-            range_info = {
-                "registry_type": tracker.registry_type.name,
-                "range": f"{tracker.register_range[0]}-{tracker.register_range[1]}",
-                "failure_count": tracker.failure_count,
-                "last_failure_time": tracker.last_failure_time,
-                "last_success_time": tracker.last_success_time
-            }
+        with self._failure_tracking_lock:
+            status["total_tracked_ranges"] = len(self.register_failure_trackers)
             
-            if tracker.is_disabled():
-                range_info["disabled_until"] = tracker.disabled_until
-                range_info["remaining_hours"] = tracker.get_remaining_disable_time() / 3600
-                status["disabled_ranges"].append(range_info)
-            elif tracker.failure_count > 0:
-                status["failed_ranges"].append(range_info)
-            else:
-                status["successful_ranges"].append(range_info)
+            for tracker in self.register_failure_trackers.values():
+                range_info = {
+                    "registry_type": tracker.registry_type.name,
+                    "range": f"{tracker.register_range[0]}-{tracker.register_range[1]}",
+                    "failure_count": tracker.failure_count,
+                    "last_failure_time": tracker.last_failure_time,
+                    "last_success_time": tracker.last_success_time
+                }
+                
+                if tracker.is_disabled():
+                    range_info["disabled_until"] = tracker.disabled_until
+                    range_info["remaining_hours"] = tracker.get_remaining_disable_time() / 3600
+                    status["disabled_ranges"].append(range_info)
+                elif tracker.failure_count > 0:
+                    status["failed_ranges"].append(range_info)
+                else:
+                    status["successful_ranges"].append(range_info)
         
         return status
     
     def reset_register_failure_tracking(self, registry_type: Registry_Type = None, register_range: tuple[int, int] = None):
         """Reset register failure tracking for specific ranges or all ranges"""
-        if registry_type is None and register_range is None:
-            # Reset all tracking
-            self.register_failure_trackers.clear()
-            self._log.info("Reset all register failure tracking")
-            return
-        
-        if register_range is not None:
-            # Reset specific range
-            key = self._get_register_range_key(register_range, registry_type or Registry_Type.INPUT)
-            if key in self.register_failure_trackers:
-                del self.register_failure_trackers[key]
-                self._log.info(f"Reset failure tracking for {registry_type.name if registry_type else 'INPUT'} range {register_range[0]}-{register_range[1]}")
-        else:
-            # Reset all ranges for specific registry type
-            keys_to_remove = []
-            for key, tracker in self.register_failure_trackers.items():
-                if tracker.registry_type == registry_type:
-                    keys_to_remove.append(key)
+        with self._failure_tracking_lock:
+            if registry_type is None and register_range is None:
+                # Reset all tracking
+                self.register_failure_trackers.clear()
+                self._log.info("Reset all register failure tracking")
+                return
             
-            for key in keys_to_remove:
-                del self.register_failure_trackers[key]
-            
-            self._log.info(f"Reset failure tracking for all {registry_type.name} ranges ({len(keys_to_remove)} ranges)")
+            if register_range is not None:
+                # Reset specific range
+                key = self._get_register_range_key(register_range, registry_type or Registry_Type.INPUT)
+                if key in self.register_failure_trackers:
+                    del self.register_failure_trackers[key]
+                    self._log.info(f"Reset failure tracking for {registry_type.name if registry_type else 'INPUT'} range {register_range[0]}-{register_range[1]}")
+            else:
+                # Reset all ranges for specific registry type
+                keys_to_remove = []
+                for key, tracker in self.register_failure_trackers.items():
+                    if tracker.registry_type == registry_type:
+                        keys_to_remove.append(key)
+                
+                for key in keys_to_remove:
+                    del self.register_failure_trackers[key]
+                
+                self._log.info(f"Reset failure tracking for all {registry_type.name} ranges ({len(keys_to_remove)} ranges)")
     
     def enable_register_range(self, register_range: tuple[int, int], registry_type: Registry_Type):
         """Manually enable a disabled register range"""
         tracker = self._get_or_create_failure_tracker(register_range, registry_type)
-        tracker.disabled_until = 0
-        tracker.failure_count = 0
+        with self._failure_tracking_lock:
+            tracker.disabled_until = 0
+            tracker.failure_count = 0
         self._log.info(f"Manually enabled register range {registry_type.name} {register_range[0]}-{register_range[1]}")
 
     def init_after_connect(self):
