@@ -383,6 +383,7 @@ class influxdb_out(transport_base):
         self._add_to_backlog(point)
         
         # Also add to current batch for immediate flush when reconnected
+        should_flush = False
         with self._batch_lock:
             self.batch_points.append(point)
             
@@ -390,7 +391,11 @@ class influxdb_out(transport_base):
             if (len(self.batch_points) >= self.batch_size or 
                 (current_time - self.last_batch_time) >= self.batch_timeout):
                 # self._log.debug(f"Flushing batch to backlog: size={len(self.batch_points)}")  # Suppressed debug message
-                self._flush_batch()
+                should_flush = True
+        
+        # Flush outside the lock to avoid deadlock
+        if should_flush:
+            self._flush_batch()
 
     def _process_and_write_data(self, data: dict[str, str], from_transport: transport_base):
         # Promote LCDMachineModelCode to device_model if present and meaningful
@@ -455,6 +460,7 @@ class influxdb_out(transport_base):
         point = self._create_influxdb_point(data, from_transport)
         
         # Add to batch with thread safety
+        should_flush = False
         with self._batch_lock:
             self.batch_points.append(point)
             # self._log.debug(f"Added point to batch. Batch size: {len(self.batch_points)}")  # Suppressed debug message
@@ -464,7 +470,11 @@ class influxdb_out(transport_base):
             if (len(self.batch_points) >= self.batch_size or 
                 (current_time - self.last_batch_time) >= self.batch_timeout):
                 # self._log.debug(f"Flushing batch: size={len(self.batch_points)}, timeout={current_time - self.last_batch_time:.1f}s")  # Suppressed debug message
-                self._flush_batch()
+                should_flush = True
+        
+        # Flush outside the lock to avoid deadlock
+        if should_flush:
+            self._flush_batch()
 
     def _create_influxdb_point(self, data: dict[str, str], from_transport: transport_base):
         """Create an InfluxDB point from data"""
