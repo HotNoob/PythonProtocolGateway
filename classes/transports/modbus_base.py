@@ -429,7 +429,7 @@ class modbus_base(transport_base):
                     client = self.clients[port_identifier]
                     if hasattr(client, 'close') and callable(client.close):
                         client.close()
-                        self._log.debug(f"Closed modbus client for {self.transport_name}")
+                        self._log.info(f"Closed modbus client for {self.transport_name}")
                 except Exception as e:
                     self._log.warning(f"Error closing modbus client for {self.transport_name}: {e}")
                 
@@ -437,7 +437,7 @@ class modbus_base(transport_base):
                 with self._clients_lock:
                     if port_identifier in self.clients:
                         del self.clients[port_identifier]
-                        self._log.debug(f"Removed client from shared dict for {self.transport_name}")
+                        self._log.info(f"Removed client from shared dict for {self.transport_name}")
             
             # Mark as disconnected and reset first_connect for reconnection
             self.connected = False
