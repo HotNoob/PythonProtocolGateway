@@ -545,7 +545,20 @@ class influxdb_out(transport_base):
             
         try:
             self.client.write_points(self.batch_points)
-            self._log.info(f"Wrote {len(self.batch_points)} points to InfluxDB")
+            
+            # Log serial numbers if debug level is enabled
+            if self._log.isEnabledFor(logging.DEBUG):
+                serial_numbers = []
+                for point in self.batch_points:
+                    if 'tags' in point and 'device_serial_number' in point['tags']:
+                        serial_numbers.append(point['tags']['device_serial_number'])
+                    else:
+                        serial_numbers.append('None')
+                serial_list = ', '.join(serial_numbers)
+                self._log.info(f"Wrote {len(self.batch_points)} points to InfluxDB (serial numbers: {serial_list})")
+            else:
+                self._log.info(f"Wrote {len(self.batch_points)} points to InfluxDB")
+            
             self.batch_points = []
             self.last_batch_time = time.time()
         except Exception as e:
@@ -555,7 +568,20 @@ class influxdb_out(transport_base):
                 # If reconnection successful, try to write again
                 try:
                     self.client.write_points(self.batch_points)
-                    self._log.info(f"Successfully wrote {len(self.batch_points)} points to InfluxDB after reconnection")
+                    
+                    # Log serial numbers if debug level is enabled
+                    if self._log.isEnabledFor(logging.DEBUG):
+                        serial_numbers = []
+                        for point in self.batch_points:
+                            if 'tags' in point and 'device_serial_number' in point['tags']:
+                                serial_numbers.append(point['tags']['device_serial_number'])
+                            else:
+                                serial_numbers.append('None')
+                        serial_list = ', '.join(serial_numbers)
+                        self._log.info(f"Successfully wrote {len(self.batch_points)} points to InfluxDB after reconnection (serial numbers: {serial_list})")
+                    else:
+                        self._log.info(f"Successfully wrote {len(self.batch_points)} points to InfluxDB after reconnection")
+                    
                     self.batch_points = []
                     self.last_batch_time = time.time()
                 except Exception as retry_e:
