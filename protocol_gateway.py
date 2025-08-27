@@ -7,6 +7,7 @@ Main module for Growatt / Inverters ModBus RTU data to MQTT
 import importlib
 import sys
 import time
+import threading
 
 # Check if Python version is greater than 3.9
 if sys.version_info < (3, 9):
@@ -86,7 +87,13 @@ class CustomConfigParser(ConfigParser):
         if isinstance(value, float):
             return value
 
-        return value.strip() if value is not None else value
+        if value is not None:
+            # Strip leading/trailing whitespace and inline comments
+            value = value.strip()
+            # Remove inline comments (everything after #)
+            if '#' in value:
+                value = value.split('#')[0].strip()
+        return value
 
     def getint(self, section, option, *args, **kwargs): #bypass fallback bug
         value = self.get(section, option, *args, **kwargs)
@@ -99,6 +106,22 @@ class CustomConfigParser(ConfigParser):
     def getboolean(self, section, option, *args, **kwargs): #bypass fallback bug
         value = self.get(section, option, *args, **kwargs)
         return strtobool(value)
+
+    def getboolean(self, section, option, *args, **kwargs): #bypass fallback bug and handle case-insensitive boolean values
+        value = self.get(section, option, *args, **kwargs)
+        if value is None:
+            return None
+        
+        # Convert to string and handle case-insensitive boolean values
+        value_str = str(value).lower().strip()
+        
+        # Handle various boolean representations
+        if value_str in ('true', 'yes', 'on', '1', 'enable', 'enabled'):
+            return True
+        elif value_str in ('false', 'no', 'off', '0', 'disable', 'disabled'):
+            return False
+        else:
+            raise ValueError(f'Not a boolean: {value}')
 
 
 class Protocol_Gateway:
@@ -116,6 +139,25 @@ class Protocol_Gateway:
     ''' transport_base is for type hinting. this can be any transport'''
 
     config_file : str
+    
+    # Simple read completion tracking
+    __read_completion_tracker : dict[str, bool] = {}
+    ''' Track which transports have completed their current read cycle '''
+    __read_tracker_lock : threading.Lock = None
+    
+    # Concurrency control
+    __disable_concurrency : bool = False
+    ''' When true, transports read sequentially instead of concurrently.
+        Concurrent mode (false) is recommended for multiple devices with same address
+        as it prevents timing interference between rapid sequential reads. '''
+    
+    # Transport timing control
+    __transport_delay_offset : float = 0.5
+    ''' Additional delay between different transports to prevent conflicts '''
+    
+    # Sequential transport delay
+    __sequential_delay : float = 1.0
+    ''' Delay between sequential transport reads to prevent device confusion '''
 
     def __init__(self, config_file : str):
         self.__log = logging.getLogger("invertermodbustomqqt_log")
@@ -142,6 +184,15 @@ class Protocol_Gateway:
 
         ##[general]
         self.__log_level = self.__settings.get("general","log_level", fallback="INFO")
+        
+        # Read concurrency setting - default to sequential (disabled) for better stability
+        self.__disable_concurrency = self.__settings.getboolean("general", "disable_concurrency", fallback=True)
+        self.__log.info(f"Concurrency mode: {'Sequential' if self.__disable_concurrency else 'Concurrent'}")
+
+        # Read sequential delay setting
+        self.__sequential_delay = self.__settings.getfloat("general", "sequential_delay", fallback=1.0)
+        if self.__disable_concurrency:
+            self.__log.info(f"Sequential delay between transports: {self.__sequential_delay} seconds")
 
         log_level = getattr(logging, self.__log_level, logging.INFO)
         self.__log.setLevel(log_level)
@@ -189,7 +240,12 @@ class Protocol_Gateway:
                 if to_transport.bridge == from_transport.transport_name:
                     to_transport.init_bridge(from_transport)
                     from_transport.init_bridge(to_transport)
-
+        
+        # Initialize read completion tracking
+        self.__read_tracker_lock = threading.Lock()
+        for transport in self.__transports:
+            if transport.read_interval > 0:
+                self.__read_completion_tracker[transport.transport_name] = False
 
     def on_message(self, transport : transport_base, entry : registry_map_entry, data : str):
         ''' message recieved from a transport! '''
@@ -198,6 +254,55 @@ class Protocol_Gateway:
                 if to_transport.transport_name == transport.bridge or transport.transport_name == to_transport.bridge:
                     to_transport.write_data({entry.variable_name : data}, transport)
                     break
+
+    def _process_transport_read(self, transport):
+        """Process a single transport read operation"""
+        try:
+            # Always ensure transport is connected before reading
+            if not transport.connected:
+                self.__log.info(f"Transport {transport.transport_name} not connected, connecting...")
+                transport.connect()
+            
+            self.__log.debug(f"Starting read cycle for {transport.transport_name}")
+            info = transport.read_data()
+
+            if not info:
+                self.__log.warning(f"Transport {transport.transport_name} completed read cycle with NO DATA - this may indicate a device issue")
+                self._mark_read_complete(transport)
+                return
+
+            self.__log.debug(f"Transport {transport.transport_name} completed read cycle with {len(info)} fields")
+            
+            # Write to output transports immediately (as before)
+            if transport.bridge:
+                for to_transport in self.__transports:
+                    if to_transport.transport_name == transport.bridge:
+                        to_transport.write_data(info, transport)
+                        break
+            
+            self._mark_read_complete(transport)
+                
+        except Exception as err:
+            self.__log.error(f"Error processing transport {transport.transport_name}: {err}")
+            traceback.print_exc()
+            self._mark_read_complete(transport)
+
+    def _mark_read_complete(self, transport):
+        """Mark a transport as having completed its read cycle"""
+        with self.__read_tracker_lock:
+            self.__read_completion_tracker[transport.transport_name] = True
+            self.__log.debug(f"Marked {transport.transport_name} read cycle as complete")
+
+    def _reset_read_completion_tracker(self):
+        """Reset the read completion tracker for the next cycle"""
+        with self.__read_tracker_lock:
+            for transport_name in self.__read_completion_tracker:
+                self.__read_completion_tracker[transport_name] = False
+
+    def _get_read_completion_status(self):
+        """Get the current read completion status for debugging"""
+        with self.__read_tracker_lock:
+            return self.__read_completion_tracker.copy()
 
     def run(self):
         """
@@ -212,25 +317,60 @@ class Protocol_Gateway:
         while self.__running:
             try:
                 now = time.time()
+                ready_transports = []
+                
+                # Find all transports that are ready to read
                 for transport in self.__transports:
-                    if transport.read_interval > 0 and now - transport.last_read_time  > transport.read_interval:
+                    if transport.read_interval > 0 and now - transport.last_read_time > transport.read_interval:
                         transport.last_read_time = now
-                        #preform read
-                        if not transport.connected:
-                            transport.connect() #reconnect
-                        else: #transport is connected
-
-                            info = transport.read_data()
-
-                            if not info:
-                                continue
-
-                            #todo. broadcast option
-                            if transport.bridge:
-                                for to_transport in self.__transports:
-                                    if to_transport.transport_name == transport.bridge:
-                                        to_transport.write_data(info, transport)
-                                        break
+                        ready_transports.append(transport)
+                
+                # Reset read completion tracker for this cycle
+                if ready_transports:
+                    self._reset_read_completion_tracker()
+                    self.__log.debug(f"Starting read cycle for {len(ready_transports)} transports: {[t.transport_name for t in ready_transports]}")
+                
+                # Process transports based on concurrency setting
+                if self.__disable_concurrency:
+                    # Sequential processing - process transports one by one
+                    for i, transport in enumerate(ready_transports):
+                        self.__log.debug(f"Processing {transport.transport_name} sequentially ({i+1}/{len(ready_transports)})")
+                        
+                        # Process current transport
+                        self._process_transport_read(transport)
+                        
+                        # Add delay between transports to prevent device confusion
+                        if i < len(ready_transports) - 1:  # Don't delay after the last transport
+                            self.__log.debug(f"Waiting {self.__sequential_delay} seconds before next transport...")
+                            time.sleep(self.__sequential_delay)
+                    
+                    # Log completion status for sequential mode
+                    completion_status = self._get_read_completion_status()
+                    completed = [name for name, status in completion_status.items() if status]
+                    self.__log.debug(f"Sequential read cycle completed. Completed transports: {completed}")
+                    
+                else:
+                    # Concurrent processing - process transports in parallel
+                    if len(ready_transports) > 1:
+                        threads = []
+                        for transport in ready_transports:
+                            thread = threading.Thread(target=self._process_transport_read, args=(transport,))
+                            thread.daemon = True
+                            thread.start()
+                            threads.append(thread)
+                        
+                        # Wait for all threads to complete
+                        for thread in threads:
+                            thread.join()
+                        
+                        # Log completion status
+                        completion_status = self._get_read_completion_status()
+                        completed = [name for name, status in completion_status.items() if status]
+                        self.__log.debug(f"Concurrent read cycle completed. Completed transports: {completed}")
+                        
+                    elif len(ready_transports) == 1:
+                        # Single transport - process directly
+                        self._process_transport_read(ready_transports[0])
 
             except Exception as err:
                 traceback.print_exc()

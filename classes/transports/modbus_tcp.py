@@ -32,14 +32,17 @@ class modbus_tcp(modbus_base):
 
         client_str = self.host+"("+str(self.port)+")"
         #check if client is already initialied
-        if client_str in modbus_base.clients:
-            self.client = modbus_base.clients[client_str]
-            return
+        with self._clients_lock:
+            if client_str in modbus_base.clients:
+                self.client = modbus_base.clients[client_str]
+                super().__init__(settings, protocolSettings=protocolSettings)
+                return
 
         self.client = ModbusTcpClient(host=self.host, port=self.port, timeout=7, retries=3)
 
-        #add to clients
-        modbus_base.clients[client_str] = self.client
+        #add to clients (thread-safe)
+        with self._clients_lock:
+            modbus_base.clients[client_str] = self.client
 
         super().__init__(settings, protocolSettings=protocolSettings)
 
@@ -54,7 +57,10 @@ class modbus_tcp(modbus_base):
         if self.pymodbus_slave_arg != "unit":
             kwargs["slave"] = kwargs.pop("unit")
 
-        self.client.write_register(register, value, **kwargs) #function code 0x06 writes to holding register
+        # Use port-specific lock for thread-safe access
+        port_lock = self._get_port_lock()
+        with port_lock:
+            self.client.write_register(register, value, **kwargs) #function code 0x06 writes to holding register
 
     def read_registers(self, start, count=1, registry_type : Registry_Type = Registry_Type.INPUT, **kwargs):
 
@@ -65,10 +71,13 @@ class modbus_tcp(modbus_base):
         if self.pymodbus_slave_arg != "unit":
             kwargs["slave"] = kwargs.pop("unit")
 
-        if registry_type == Registry_Type.INPUT:
-            return self.client.read_input_registers(start,count=count, **kwargs  )
-        elif registry_type == Registry_Type.HOLDING:
-            return self.client.read_holding_registers(start,count=count, **kwargs)
+        # Use port-specific lock for thread-safe access
+        port_lock = self._get_port_lock()
+        with port_lock:
+            if registry_type == Registry_Type.INPUT:
+                return self.client.read_input_registers(start,count=count, **kwargs  )
+            elif registry_type == Registry_Type.HOLDING:
+                return self.client.read_holding_registers(start,count=count, **kwargs)
 
     def connect(self):
         self.connected = self.client.connect()
