@@ -2,13 +2,15 @@ import logging
 import os
 import pickle
 import time
+import logging
+import threading
 from configparser import SectionProxy
 
 from influxdb import InfluxDBClient
 
 from defs.common import strtobool
 
-from ..protocol_settings import Registry_Type
+from ..protocol_settings import Registry_Type, WriteMode, registry_map_entry, Data_Type
 from .transport_base import transport_base
 
 
@@ -45,7 +47,6 @@ class influxdb_out(transport_base):
     periodic_reconnect_interval: float = 14400.0  # 4 hours in seconds
     
     client = None
-    batch_points = []
     last_batch_time = 0
     last_connection_check = 0
     connection_check_interval = 300  # Check connection every 300 seconds
@@ -90,6 +91,10 @@ class influxdb_out(transport_base):
         
         self.write_enabled = True  # InfluxDB output is always write-enabled
         super().__init__(settings)
+        
+        # Initialize instance variables for thread safety
+        self.batch_points = []
+        self._batch_lock = threading.Lock()
         
         # Initialize persistent storage
         if self.enable_persistent_storage:
@@ -171,7 +176,7 @@ class influxdb_out(transport_base):
             self._log.warning(f"Backlog full, removed oldest point: {removed.get('measurement', 'unknown')}")
         
         self._save_backlog()
-        self._log.debug(f"Added point to backlog. Backlog size: {len(self.backlog_points)}")
+        # self._log.debug(f"Added point to backlog. Backlog size: {len(self.backlog_points)}")  # Suppressed debug message
 
     def _flush_backlog(self):
         """Flush backlog points to InfluxDB"""
@@ -256,7 +261,7 @@ class influxdb_out(transport_base):
                 try:
                     # Test current connection
                     self.client.ping()
-                    self._log.debug("Periodic connection check: connection is healthy")
+                    # self._log.debug("Periodic connection check: connection is healthy")  # Suppressed debug message
                 except Exception as e:
                     self._log.warning(f"Periodic connection check failed: {e}")
                     return self._attempt_reconnect()
@@ -343,9 +348,15 @@ class influxdb_out(transport_base):
         return self._check_connection()
 
     def write_data(self, data: dict[str, str], from_transport: transport_base):
-        """Write data to InfluxDB"""
+        # Promote LCDMachineModelCode to device_model if present and meaningful
+        if "LCDMachineModelCode" in data and data["LCDMachineModelCode"] and data["LCDMachineModelCode"] != "hotnoob":
+            from_transport.device_model = data["LCDMachineModelCode"]
         if not self.write_enabled:
             return
+
+        # Debug logging to track transport data flow
+        if self._log.isEnabledFor(logging.DEBUG):
+            self._log.debug(f"Received data from {from_transport.transport_name} (serial: {from_transport.device_serial_number}) with {len(data)} fields")
 
         # Check connection status before processing data
         if not self._check_connection():
@@ -354,14 +365,16 @@ class influxdb_out(transport_base):
             self._process_and_store_data(data, from_transport)
             return
 
-        self._log.debug(f"write data from [{from_transport.transport_name}] to influxdb_out transport")
-        self._log.debug(f"Data: {data}")
+        # self._log.debug(f"write data from [{from_transport.transport_name}] to influxdb_out transport")  # Suppressed debug message
+        # self._log.debug(f"Data: {data}")  # Suppressed debug message
 
         # Process and write data
         self._process_and_write_data(data, from_transport)
 
     def _process_and_store_data(self, data: dict[str, str], from_transport: transport_base):
-        """Process data and store in backlog when not connected"""
+        # Promote LCDMachineModelCode to device_model if present and meaningful
+        if "LCDMachineModelCode" in data and data["LCDMachineModelCode"] and data["LCDMachineModelCode"] != "hotnoob":
+            from_transport.device_model = data["LCDMachineModelCode"]
         if not self.enable_persistent_storage:
             self._log.warning("Persistent storage disabled, data will be lost")
             return
@@ -373,16 +386,24 @@ class influxdb_out(transport_base):
         self._add_to_backlog(point)
         
         # Also add to current batch for immediate flush when reconnected
-        self.batch_points.append(point)
+        should_flush = False
+        with self._batch_lock:
+            self.batch_points.append(point)
+            
+            current_time = time.time()
+            if (len(self.batch_points) >= self.batch_size or 
+                (current_time - self.last_batch_time) >= self.batch_timeout):
+                # self._log.debug(f"Flushing batch to backlog: size={len(self.batch_points)}")  # Suppressed debug message
+                should_flush = True
         
-        current_time = time.time()
-        if (len(self.batch_points) >= self.batch_size or 
-            (current_time - self.last_batch_time) >= self.batch_timeout):
-            self._log.debug(f"Flushing batch to backlog: size={len(self.batch_points)}")
+        # Flush outside the lock to avoid deadlock
+        if should_flush:
             self._flush_batch()
 
     def _process_and_write_data(self, data: dict[str, str], from_transport: transport_base):
-        """Process data and write to InfluxDB when connected"""
+        # Promote LCDMachineModelCode to device_model if present and meaningful
+        if "LCDMachineModelCode" in data and data["LCDMachineModelCode"] and data["LCDMachineModelCode"] != "hotnoob":
+            from_transport.device_model = data["LCDMachineModelCode"]
         # Prepare tags for InfluxDB
         tags = {}
         
@@ -401,67 +422,61 @@ class influxdb_out(transport_base):
         # Prepare fields (the actual data values)
         fields = {}
         for key, value in data.items():
-            # Check if we should force float formatting based on protocol settings
             should_force_float = False
             unit_mod_found = None
-            
-            # Try to get registry entry from protocol settings to check unit_mod
+            is_enum = False
+            is_ascii = False
+            entry = None
             if hasattr(from_transport, 'protocolSettings') and from_transport.protocolSettings:
-                # Check both input and holding registries
                 for registry_type in [Registry_Type.INPUT, Registry_Type.HOLDING]:
                     registry_map = from_transport.protocolSettings.get_registry_map(registry_type)
-                    for entry in registry_map:
-                        # Match by variable_name (which is lowercase)
-                        if entry.variable_name.lower() == key.lower():
-                            unit_mod_found = entry.unit_mod
-                            # If unit_mod is not 1.0, this value should be treated as float
-                            if entry.unit_mod != 1.0:
+                    for e in registry_map:
+                        if e.variable_name.lower() == key.lower():
+                            entry = e
+                            unit_mod_found = e.unit_mod
+                            if e.unit_mod != 1.0:
                                 should_force_float = True
-                                self._log.debug(f"Variable {key} has unit_mod {entry.unit_mod}, forcing float format")
+                            if getattr(e, 'has_enum_mapping', False):
+                                is_enum = True
+                            if getattr(e, 'data_type', None) == Data_Type.ASCII:
+                                is_ascii = True
                             break
-                    if should_force_float:
+                    if should_force_float or is_enum or is_ascii:
                         break
-            
-            # Try to convert to numeric values for InfluxDB
+            if is_enum or is_ascii:
+                fields[key] = str(value)
+                continue
             try:
-                # Try to convert to float first
                 float_val = float(value)
-                
-                # Always use float for InfluxDB to avoid type conflicts
-                # InfluxDB is strict about field types - once a field is created as integer,
-                # it must always be integer. Using float avoids this issue.
                 if self.force_float:
                     fields[key] = float_val
                 else:
-                    # Only use integer if it's actually an integer and we're not forcing floats
                     if float_val.is_integer():
                         fields[key] = int(float_val)
                     else:
                         fields[key] = float_val
-                
-                # Log data type conversion for debugging
-                if self._log.isEnabledFor(logging.DEBUG):
-                    original_type = type(value).__name__
-                    final_type = type(fields[key]).__name__
-                    self._log.debug(f"Field {key}: {value} ({original_type}) -> {fields[key]} ({final_type}) [unit_mod: {unit_mod_found}]")
-                
             except (ValueError, TypeError):
-                # If conversion fails, store as string
                 fields[key] = str(value)
                 self._log.debug(f"Field {key}: {value} -> string (conversion failed)")
         
         # Create InfluxDB point
         point = self._create_influxdb_point(data, from_transport)
         
-        # Add to batch
-        self.batch_points.append(point)
-        self._log.debug(f"Added point to batch. Batch size: {len(self.batch_points)}")
+        # Add to batch with thread safety
+        should_flush = False
+        with self._batch_lock:
+            self.batch_points.append(point)
+            # self._log.debug(f"Added point to batch. Batch size: {len(self.batch_points)}")  # Suppressed debug message
+            
+            # Check if we should flush the batch
+            current_time = time.time()
+            if (len(self.batch_points) >= self.batch_size or 
+                (current_time - self.last_batch_time) >= self.batch_timeout):
+                # self._log.debug(f"Flushing batch: size={len(self.batch_points)}, timeout={current_time - self.last_batch_time:.1f}s")  # Suppressed debug message
+                should_flush = True
         
-        # Check if we should flush the batch
-        current_time = time.time()
-        if (len(self.batch_points) >= self.batch_size or 
-            (current_time - self.last_batch_time) >= self.batch_timeout):
-            self._log.debug(f"Flushing batch: size={len(self.batch_points)}, timeout={current_time - self.last_batch_time:.1f}s")
+        # Flush outside the lock to avoid deadlock
+        if should_flush:
             self._flush_batch()
 
     def _create_influxdb_point(self, data: dict[str, str], from_transport: transport_base):
@@ -483,44 +498,42 @@ class influxdb_out(transport_base):
         # Prepare fields (the actual data values)
         fields = {}
         for key, value in data.items():
-            # Check if we should force float formatting based on protocol settings
             should_force_float = False
             unit_mod_found = None
-            
-            # Try to get registry entry from protocol settings to check unit_mod
+            is_enum = False
+            is_ascii = False
+            entry = None
             if hasattr(from_transport, 'protocolSettings') and from_transport.protocolSettings:
-                # Check both input and holding registries
                 for registry_type in [Registry_Type.INPUT, Registry_Type.HOLDING]:
                     registry_map = from_transport.protocolSettings.get_registry_map(registry_type)
-                    for entry in registry_map:
-                        # Match by variable_name (which is lowercase)
-                        if entry.variable_name.lower() == key.lower():
-                            unit_mod_found = entry.unit_mod
-                            # If unit_mod is not 1.0, this value should be treated as float
-                            if entry.unit_mod != 1.0:
+                    for e in registry_map:
+                        if e.variable_name.lower() == key.lower():
+                            entry = e
+                            unit_mod_found = e.unit_mod
+                            if e.unit_mod != 1.0:
                                 should_force_float = True
+                            if getattr(e, 'has_enum_mapping', False):
+                                is_enum = True
+                            if getattr(e, 'data_type', None) == Data_Type.ASCII:
+                                is_ascii = True
                             break
-                    if should_force_float:
+                    if should_force_float or is_enum or is_ascii:
                         break
-            
-            # Try to convert to numeric values for InfluxDB
+            if is_enum or is_ascii:
+                fields[key] = str(value)
+                continue
             try:
-                # Try to convert to float first
                 float_val = float(value)
-                
-                # Always use float for InfluxDB to avoid type conflicts
                 if self.force_float:
                     fields[key] = float_val
                 else:
-                    # Only use integer if it's actually an integer and we're not forcing floats
                     if float_val.is_integer():
                         fields[key] = int(float_val)
                     else:
                         fields[key] = float_val
-                
             except (ValueError, TypeError):
-                # If conversion fails, store as string
                 fields[key] = str(value)
+                self._log.debug(f"Field {key}: {value} -> string (conversion failed)")
         
         # Create InfluxDB point
         point = {
@@ -537,22 +550,78 @@ class influxdb_out(transport_base):
 
     def _flush_batch(self):
         """Flush the batch of points to InfluxDB"""
-        if not self.batch_points:
-            return
+        with self._batch_lock:
+            if not self.batch_points:
+                return
+                
+            # Get a copy of the batch points and clear the list
+            points_to_write = self.batch_points.copy()
+            self.batch_points = []
             
         # Check connection before attempting to write
         if not self._check_connection():
             self._log.warning("Not connected to InfluxDB, storing batch in backlog")
             # Store all points in backlog
-            for point in self.batch_points:
+            for point in points_to_write:
                 self._add_to_backlog(point)
-            self.batch_points = []
             return
             
         try:
-            self.client.write_points(self.batch_points)
-            self._log.info(f"Wrote {len(self.batch_points)} points to InfluxDB")
-            self.batch_points = []
+            self.client.write_points(points_to_write)
+            
+            # Log serial numbers and sample values if debug level is enabled
+            if self._log.isEnabledFor(logging.DEBUG):
+                serial_numbers = []
+                sample_values = []
+                for point in points_to_write:
+                    # Get serial number
+                    if 'tags' in point and 'device_serial_number' in point['tags']:
+                        serial_numbers.append(point['tags']['device_serial_number'])
+                    else:
+                        serial_numbers.append('None')
+                    
+                    # Get sample field values
+                    if 'fields' in point:
+                        fields = point['fields']
+                        sample_data = {}
+                        for field_name in ['vacr', 'VacR', 'soc', 'SOC', 'fwcode', 'FWCode', 'vbat', 'Vbat', 'pinv', 'Pinv']:
+                            if field_name in fields:
+                                sample_data[field_name] = fields[field_name]
+                        if sample_data:
+                            sample_values.append(sample_data)
+                        else:
+                            # Debug: Log all available fields when sample fields are not found
+                            if len(fields) > 0:
+                                # Show first 10 field names to help identify the correct names
+                                field_names = list(fields.keys())[:10]
+                                sample_values.append(f'No sample fields found. Available fields: {field_names}')
+                            else:
+                                sample_values.append('No fields found')
+                    else:
+                        sample_values.append('No fields found')
+                
+                serial_list = ', '.join(serial_numbers)
+                self._log.info(f"Wrote {len(points_to_write)} points to InfluxDB (serial numbers: {serial_list})")
+                
+                # Log sample values for each point
+                for i, (serial, samples) in enumerate(zip(serial_numbers, sample_values)):
+                    # Get transport name from point tags
+                    transport_name = 'unknown'
+                    if i < len(points_to_write) and 'tags' in points_to_write[i] and 'transport' in points_to_write[i]['tags']:
+                        transport_name = points_to_write[i]['tags']['transport']
+                    
+                    # Debug: Log the full tags for troubleshooting
+                    if i < len(points_to_write) and 'tags' in points_to_write[i]:
+                        self._log.debug(f"  Point {i+1} tags: {points_to_write[i]['tags']}")
+                    
+                    if isinstance(samples, dict):
+                        sample_str = ', '.join([f"{k}={v}" for k, v in samples.items()])
+                        self._log.debug(f"  Point {i+1} ({serial}) from {transport_name}: {sample_str}")
+                    else:
+                        self._log.debug(f"  Point {i+1} ({serial}) from {transport_name}: {samples}")
+            else:
+                self._log.info(f"Wrote {len(points_to_write)} points to InfluxDB")
+            
             self.last_batch_time = time.time()
         except Exception as e:
             self._log.error(f"Failed to write batch to InfluxDB: {e}")
@@ -560,22 +629,68 @@ class influxdb_out(transport_base):
             if self._attempt_reconnect():
                 # If reconnection successful, try to write again
                 try:
-                    self.client.write_points(self.batch_points)
-                    self._log.info(f"Successfully wrote {len(self.batch_points)} points to InfluxDB after reconnection")
-                    self.batch_points = []
+                    self.client.write_points(points_to_write)
+                    
+                    # Log serial numbers and sample values if debug level is enabled
+                    if self._log.isEnabledFor(logging.DEBUG):
+                        serial_numbers = []
+                        sample_values = []
+                        for point in points_to_write:
+                            # Get serial number
+                            if 'tags' in point and 'device_serial_number' in point['tags']:
+                                serial_numbers.append(point['tags']['device_serial_number'])
+                            else:
+                                serial_numbers.append('None')
+                            
+                            # Get sample field values
+                            if 'fields' in point:
+                                fields = point['fields']
+                                sample_data = {}
+                                for field_name in ['vacr', 'soc', 'fwcode', 'vbat', 'pinv']:
+                                    if field_name in fields:
+                                        sample_data[field_name] = fields[field_name]
+                                if sample_data:
+                                    sample_values.append(sample_data)
+                                else:
+                                    # Debug: Log all available fields when sample fields are not found
+                                    if len(fields) > 0:
+                                        # Show first 10 field names to help identify the correct names
+                                        field_names = list(fields.keys())[:10]
+                                        sample_values.append(f'No sample fields found. Available fields: {field_names}')
+                                    else:
+                                        sample_values.append('No fields found')
+                            else:
+                                sample_values.append('No fields found')
+                        
+                        serial_list = ', '.join(serial_numbers)
+                        self._log.info(f"Successfully wrote {len(points_to_write)} points to InfluxDB after reconnection (serial numbers: {serial_list})")
+                        
+                        # Log sample values for each point
+                        for i, (serial, samples) in enumerate(zip(serial_numbers, sample_values)):
+                            # Get transport name from point tags
+                            transport_name = 'unknown'
+                            if i < len(points_to_write) and 'tags' in points_to_write[i] and 'transport' in points_to_write[i]['tags']:
+                                transport_name = points_to_write[i]['tags']['transport']
+                            
+                            if isinstance(samples, dict):
+                                sample_str = ', '.join([f"{k}={v}" for k, v in samples.items()])
+                                self._log.debug(f"  Point {i+1} ({serial}) from {transport_name}: {sample_str}")
+                            else:
+                                self._log.debug(f"  Point {i+1} ({serial}) from {transport_name}: {samples}")
+                    else:
+                        self._log.info(f"Successfully wrote {len(points_to_write)} points to InfluxDB after reconnection")
+                    
                     self.last_batch_time = time.time()
                 except Exception as retry_e:
                     self._log.error(f"Failed to write batch after reconnection: {retry_e}")
                     # Store failed points in backlog
-                    for point in self.batch_points:
+                    for point in points_to_write:
                         self._add_to_backlog(point)
-                    self.batch_points = []
                     self.connected = False
             else:
                 # Store failed points in backlog
-                for point in self.batch_points:
+                for point in points_to_write:
                     self._add_to_backlog(point)
-                self.batch_points = []
                 self.connected = False
 
     def init_bridge(self, from_transport: transport_base):

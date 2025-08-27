@@ -3,11 +3,86 @@ import json
 import os
 import re
 import time
+import threading
 from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from pymodbus.exceptions import ModbusIOException
+from pymodbus.pdu import ExceptionResponse  # Import for exception code constants
 
 from defs.common import strtobool
+
+# Modbus function codes for exception interpretation
+MODBUS_FUNCTION_CODES = {
+    0x01: "Read Coils",
+    0x02: "Read Discrete Inputs", 
+    0x03: "Read Holding Registers",
+    0x04: "Read Input Registers",
+    0x05: "Write Single Coil",
+    0x06: "Write Single Register",
+    0x0F: "Write Multiple Coils",
+    0x10: "Write Multiple Registers",
+    0x14: "Read File Record",
+    0x15: "Write File Record",
+    0x16: "Mask Write Register",
+    0x17: "Read/Write Multiple Registers",
+    0x2B: "Read Device Identification"
+}
+
+# Modbus exception codes for exception interpretation (from pymodbus.pdu.ExceptionResponse)
+MODBUS_EXCEPTION_CODES = {
+    ExceptionResponse.ILLEGAL_FUNCTION: "ILLEGAL_FUNCTION",
+    ExceptionResponse.ILLEGAL_ADDRESS: "ILLEGAL_ADDRESS",
+    ExceptionResponse.ILLEGAL_VALUE: "ILLEGAL_VALUE",
+    ExceptionResponse.SLAVE_FAILURE: "SLAVE_FAILURE",
+    ExceptionResponse.ACKNOWLEDGE: "ACKNOWLEDGE",
+    ExceptionResponse.SLAVE_BUSY: "SLAVE_BUSY",
+    ExceptionResponse.NEGATIVE_ACKNOWLEDGE: "NEGATIVE_ACKNOWLEDGE",
+    ExceptionResponse.MEMORY_PARITY_ERROR: "MEMORY_PARITY_ERROR",
+    ExceptionResponse.GATEWAY_PATH_UNAVIABLE: "GATEWAY_PATH_UNAVAILABLE",
+    ExceptionResponse.GATEWAY_NO_RESPONSE: "GATEWAY_NO_RESPONSE"
+}
+
+# Descriptions for Modbus exception codes (using ExceptionResponse constants as keys)
+MODBUS_EXCEPTION_DESCRIPTIONS = {
+    ExceptionResponse.ILLEGAL_FUNCTION: "The function code received in the query is not an allowable action for the slave",
+    ExceptionResponse.ILLEGAL_ADDRESS: "The data address received in the query is not an allowable address for the slave",
+    ExceptionResponse.ILLEGAL_VALUE: "A value contained in the query data field is not an allowable value for the slave",
+    ExceptionResponse.SLAVE_FAILURE: "An unrecoverable error occurred while the slave was attempting to perform the requested action",
+    ExceptionResponse.ACKNOWLEDGE: "The slave has accepted the request and is processing it, but a long duration of time will be required",
+    ExceptionResponse.SLAVE_BUSY: "The slave is engaged in processing a long-duration program command",
+    ExceptionResponse.NEGATIVE_ACKNOWLEDGE: "The slave cannot perform the program function received in the query",
+    ExceptionResponse.MEMORY_PARITY_ERROR: "The slave attempted to read record file, but detected a parity error in the memory",
+    ExceptionResponse.GATEWAY_PATH_UNAVIABLE: "The gateway path is not available",
+    ExceptionResponse.GATEWAY_NO_RESPONSE: "The gateway target device failed to respond"
+}
+
+def interpret_modbus_exception_code(code):
+    """
+    Interpret a Modbus exception response code and return human-readable information.
+    
+    Args:
+        code (int): The exception response code (e.g., 132)
+        
+    Returns:
+        str: Human-readable description of the exception
+    """
+    # Extract function code (lower 7 bits)
+    function_code = code & 0x7F
+    
+    # Check if this is an exception response (upper bit set)
+    if code & 0x80:
+        # This is an exception response
+        exception_code = code & 0x7F  # The exception code is in the lower 7 bits
+        function_name = MODBUS_FUNCTION_CODES.get(function_code, f"Unknown Function ({function_code})")
+        exception_name = MODBUS_EXCEPTION_CODES.get(exception_code, f"Unknown Exception ({exception_code})")
+        description = MODBUS_EXCEPTION_DESCRIPTIONS.get(exception_code, "Unknown exception code")
+        return f"Modbus Exception: {function_name} failed with {exception_name} - {description}"
+    else:
+        # This is not an exception response
+        function_name = MODBUS_FUNCTION_CODES.get(function_code, f"Unknown Function ({function_code})")
+        return f"Modbus Function: {function_name} (not an exception response)"
 
 from ..protocol_settings import (
     Data_Type,
@@ -26,35 +101,112 @@ if TYPE_CHECKING:
         from pymodbus.client import BaseModbusClient
 
 
+@dataclass
+class RegisterFailureTracker:
+    """Tracks register read failures and manages soft disabling"""
+    register_range: tuple[int, int]  # (start, end) register range
+    registry_type: Registry_Type
+    failure_count: int = 0
+    last_failure_time: float = 0
+    last_success_time: float = 0
+    disabled_until: float = 0  # Unix timestamp when disabled until
+    _lock: threading.Lock = None
+    
+    def __post_init__(self):
+        if self._lock is None:
+            self._lock = threading.Lock()
+    
+    def record_failure(self, max_failures: int = 5, disable_duration_hours: int = 12):
+        """Record a failed read attempt"""
+        with self._lock:
+            current_time = time.time()
+            self.failure_count += 1
+            self.last_failure_time = current_time
+            
+            # If we've had enough failures, disable for specified duration
+            if self.failure_count >= max_failures:
+                self.disabled_until = current_time + (disable_duration_hours * 3600)
+                return True  # Indicates this range should be disabled
+            return False
+    
+    def record_success(self):
+        """Record a successful read attempt"""
+        with self._lock:
+            current_time = time.time()
+            self.last_success_time = current_time
+            # Reset failure count on success
+            self.failure_count = 0
+            self.disabled_until = 0
+    
+    def is_disabled(self) -> bool:
+        """Check if this register range is currently disabled"""
+        with self._lock:
+            if self.disabled_until == 0:
+                return False
+            return time.time() < self.disabled_until
+    
+    def get_remaining_disable_time(self) -> float:
+        """Get remaining time until re-enabled (0 if not disabled)"""
+        with self._lock:
+            if self.disabled_until == 0:
+                return 0
+            remaining = self.disabled_until - time.time()
+            return max(0, remaining)
+
+
 class modbus_base(transport_base):
 
 
     #this is specifically static
     clients : dict[str, "BaseModbusClient"] = {}
     ''' str is identifier, dict of clients when multiple transports use the same ports '''
-
-    #non-static here for reference, type hinting, python bs ect...
-    modbus_delay_increament : float = 0.05
-    ''' delay adjustment every error. todo: add a setting for this '''
-
-    modbus_delay_setting : float = 0.85
-    '''time inbetween requests, unmodified'''
-
-    modbus_delay : float = 0.85
-    '''time inbetween requests'''
-
-    analyze_protocol_enabled : bool = False
-    analyze_protocol_save_load : bool = False
-    first_connect : bool = True
-
-    send_holding_register : bool = True
-    send_input_register : bool = True
+    
+    # Threading locks for concurrency control
+    _clients_lock : threading.Lock = threading.Lock()
+    ''' Lock for accessing the shared clients dictionary '''
+    _client_locks : dict[str, threading.Lock] = {}
+    ''' Port-specific locks to allow concurrent access to different ports '''
 
     def __init__(self, settings : "SectionProxy", protocolSettings : "protocol_settings" = None):
         super().__init__(settings)
 
-        self.analyze_protocol_enabled = settings.getboolean(option="analyze_protocol", fallback=self.analyze_protocol_enabled)
+        # Initialize instance-specific variables (not class-level)
+        self.modbus_delay_increament : float = 0.05
+        ''' delay adjustment every error. todo: add a setting for this '''
+        
+        self.modbus_delay_setting : float = 0.85
+        '''time inbetween requests, unmodified'''
+        
+        self.modbus_delay : float = 0.85
+        '''time inbetween requests'''
+        
+        self.analyze_protocol_enabled : bool = False
+        self.analyze_protocol_save_load : bool = False
+        self.first_connect : bool = True
+        self._needs_reconnection : bool = False
+        
+        self.send_holding_register : bool = True
+        self.send_input_register : bool = True
+        
+        # Register failure tracking - make instance-specific
+        self.enable_register_failure_tracking: bool = True
+        self.max_failures_before_disable: int = 5
+        self.disable_duration_hours: int = 12
+        
+        # Initialize transport-specific lock
+        self._transport_lock = threading.Lock()
+        
+        # Initialize instance-specific register failure tracking
+        self.register_failure_trackers: dict[str, RegisterFailureTracker] = {}
+        self._failure_tracking_lock = threading.Lock()
+
+        self.analyze_protocol_enabled = settings.getboolean("analyze_protocol", fallback=self.analyze_protocol_enabled)
         self.analyze_protocol_save_load = settings.getboolean("analyze_protocol_save_load", fallback=self.analyze_protocol_save_load)
+
+        # Register failure tracking settings
+        self.enable_register_failure_tracking = settings.getboolean("enable_register_failure_tracking", fallback=self.enable_register_failure_tracking)
+        self.max_failures_before_disable = settings.getint("max_failures_before_disable", fallback=self.max_failures_before_disable)
+        self.disable_duration_hours = settings.getint("disable_duration_hours", fallback=self.disable_duration_hours)
 
         # get defaults from protocol settings
         if "send_input_register" in self.protocolSettings.settings:
@@ -74,20 +226,240 @@ class modbus_base(transport_base):
 
         # Note: Connection and analyze_protocol will be called after subclass initialization is complete
 
-    def init_after_connect(self):
-        #from transport_base settings
-        if self.write_enabled:
-            self.enable_write()
+    def _get_port_identifier(self) -> str:
+        """Get a unique identifier for this transport's port"""
+        if hasattr(self, 'port'):
+            return f"{self.port}_{self.baudrate}"
+        elif hasattr(self, 'host') and hasattr(self, 'port'):
+            return f"{self.host}_{self.port}"
+        else:
+            return self.transport_name
+    
+    def _get_port_lock(self) -> threading.Lock:
+        """Get or create a lock for this transport's port"""
+        port_id = self._get_port_identifier()
+        
+        with self._clients_lock:
+            if port_id not in self._client_locks:
+                self._client_locks[port_id] = threading.Lock()
+        
+        return self._client_locks[port_id]
 
-        #if sn is empty, attempt to autoread it
-        if not self.device_serial_number:
-            self.device_serial_number = self.read_serial_number()
-            self.update_identifier()
+    def _get_register_range_key(self, register_range: tuple[int, int], registry_type: Registry_Type) -> str:
+        """Generate a unique key for a register range"""
+        return f"{registry_type.name}_{register_range[0]}_{register_range[1]}"
+    
+    def _get_or_create_failure_tracker(self, register_range: tuple[int, int], registry_type: Registry_Type) -> RegisterFailureTracker:
+        """Get or create a failure tracker for a register range"""
+        key = self._get_register_range_key(register_range, registry_type)
+        
+        with self._failure_tracking_lock:
+            if key not in self.register_failure_trackers:
+                self.register_failure_trackers[key] = RegisterFailureTracker(
+                    register_range=register_range,
+                    registry_type=registry_type
+                )
+            
+            return self.register_failure_trackers[key]
+    
+    def _record_register_read_success(self, register_range: tuple[int, int], registry_type: Registry_Type):
+        """Record a successful register read"""
+        if not self.enable_register_failure_tracking:
+            return
+            
+        tracker = self._get_or_create_failure_tracker(register_range, registry_type)
+        # Only log if the last failure was after the last success (i.e., this is the first success after a failure)
+        should_log_recovery = tracker.last_failure_time > tracker.last_success_time
+        tracker.record_success()
+        
+        if should_log_recovery:
+            self._log.info(f"Register range {registry_type.name} {register_range[0]}-{register_range[1]} is working again after previous failures")
+    
+    def _record_register_read_failure(self, register_range: tuple[int, int], registry_type: Registry_Type) -> bool:
+        """Record a failed register read, returns True if range should be disabled"""
+        if not self.enable_register_failure_tracking:
+            return False
+            
+        tracker = self._get_or_create_failure_tracker(register_range, registry_type)
+        should_disable = tracker.record_failure(self.max_failures_before_disable, self.disable_duration_hours)
+        
+        if should_disable:
+            self._log.warning(f"Register range {registry_type.name} {register_range[0]}-{register_range[1]} disabled for {self.disable_duration_hours} hours after {tracker.failure_count} failures")
+        else:
+            self._log.warning(f"Register range {registry_type.name} {register_range[0]}-{register_range[1]} failed ({tracker.failure_count}/{self.max_failures_before_disable} attempts)")
+        
+        return should_disable
+    
+    def _is_register_range_disabled(self, register_range: tuple[int, int], registry_type: Registry_Type) -> bool:
+        """Check if a register range is currently disabled"""
+        if not self.enable_register_failure_tracking:
+            return False
+            
+        tracker = self._get_or_create_failure_tracker(register_range, registry_type)
+        return tracker.is_disabled()
+    
+    def _get_disabled_ranges_info(self) -> list[str]:
+        """Get information about currently disabled register ranges"""
+        disabled_info = []
+        current_time = time.time()
+        
+        with self._failure_tracking_lock:
+            for tracker in self.register_failure_trackers.values():
+                if tracker.is_disabled():
+                    remaining_hours = tracker.get_remaining_disable_time() / 3600
+                    disabled_info.append(
+                        f"{tracker.registry_type.name} {tracker.register_range[0]}-{tracker.register_range[1]} "
+                        f"(disabled for {remaining_hours:.1f}h, {tracker.failure_count} failures)"
+                    )
+        
+        return disabled_info
+    
+    def get_register_failure_status(self) -> dict:
+        """Get comprehensive status of register failure tracking"""
+        status = {
+            "enabled": self.enable_register_failure_tracking,
+            "max_failures_before_disable": self.max_failures_before_disable,
+            "disable_duration_hours": self.disable_duration_hours,
+            "total_tracked_ranges": 0,
+            "disabled_ranges": [],
+            "failed_ranges": [],
+            "successful_ranges": []
+        }
+        
+        with self._failure_tracking_lock:
+            status["total_tracked_ranges"] = len(self.register_failure_trackers)
+            
+            for tracker in self.register_failure_trackers.values():
+                range_info = {
+                    "registry_type": tracker.registry_type.name,
+                    "range": f"{tracker.register_range[0]}-{tracker.register_range[1]}",
+                    "failure_count": tracker.failure_count,
+                    "last_failure_time": tracker.last_failure_time,
+                    "last_success_time": tracker.last_success_time
+                }
+                
+                if tracker.is_disabled():
+                    range_info["disabled_until"] = tracker.disabled_until
+                    range_info["remaining_hours"] = tracker.get_remaining_disable_time() / 3600
+                    status["disabled_ranges"].append(range_info)
+                elif tracker.failure_count > 0:
+                    status["failed_ranges"].append(range_info)
+                else:
+                    status["successful_ranges"].append(range_info)
+        
+        return status
+    
+    def reset_register_failure_tracking(self, registry_type: Registry_Type = None, register_range: tuple[int, int] = None):
+        """Reset register failure tracking for specific ranges or all ranges"""
+        with self._failure_tracking_lock:
+            if registry_type is None and register_range is None:
+                # Reset all tracking
+                self.register_failure_trackers.clear()
+                self._log.info("Reset all register failure tracking")
+                return
+            
+            if register_range is not None:
+                # Reset specific range
+                key = self._get_register_range_key(register_range, registry_type or Registry_Type.INPUT)
+                if key in self.register_failure_trackers:
+                    del self.register_failure_trackers[key]
+                    self._log.info(f"Reset failure tracking for {registry_type.name if registry_type else 'INPUT'} range {register_range[0]}-{register_range[1]}")
+            else:
+                # Reset all ranges for specific registry type
+                keys_to_remove = []
+                for key, tracker in self.register_failure_trackers.items():
+                    if tracker.registry_type == registry_type:
+                        keys_to_remove.append(key)
+                
+                for key in keys_to_remove:
+                    del self.register_failure_trackers[key]
+                
+                self._log.info(f"Reset failure tracking for all {registry_type.name} ranges ({len(keys_to_remove)} ranges)")
+    
+    def enable_register_range(self, register_range: tuple[int, int], registry_type: Registry_Type):
+        """Manually enable a disabled register range"""
+        tracker = self._get_or_create_failure_tracker(register_range, registry_type)
+        with self._failure_tracking_lock:
+            tracker.disabled_until = 0
+            tracker.failure_count = 0
+        self._log.info(f"Manually enabled register range {registry_type.name} {register_range[0]}-{register_range[1]}")
+
+    def init_after_connect(self):
+        # Use transport lock to prevent concurrent access during initialization
+        with self._transport_lock:
+            #from transport_base settings
+            if self.write_enabled:
+                self.enable_write()
+
+            #if sn is empty, attempt to autoread it
+            if not self.device_serial_number:
+                self._log.info(f"Reading serial number for transport {self.transport_name} on port {getattr(self, 'port', 'unknown')}")
+                self.device_serial_number = self.read_serial_number()
+                self._log.info(f"Transport {self.transport_name} serial number: {self.device_serial_number}")
+                self.update_identifier()
+            else:
+                self._log.debug(f"Transport {self.transport_name} already has serial number: {self.device_serial_number}")
 
     def connect(self):
-        if self.connected and self.first_connect:
+        """Connect to the Modbus device"""
+        # Add debugging information
+        port_info = getattr(self, 'port', 'unknown')
+        address_info = getattr(self, 'address', 'unknown')
+        self._log.info(f"Connecting to Modbus device: address={address_info}, port={port_info}")
+        
+        # Handle first connection or reconnection
+        if self.first_connect:
             self.first_connect = False
             self.init_after_connect()
+        elif not self.connected:
+            # Reconnection case - reinitialize after connection is established
+            self._log.info(f"Reconnecting transport {self.transport_name}")
+            # The actual connection is handled by subclasses (e.g., modbus_rtu)
+            # We just need to reinitialize after connection
+            self.init_after_connect()
+        
+        # Reset reconnection flag after successful connection
+        if self.connected:
+            self._needs_reconnection = False
+            
+            # Reset protocol settings timestamps to ensure fresh reading
+            if hasattr(self, 'protocolSettings') and self.protocolSettings:
+                for registry_type in [Registry_Type.INPUT, Registry_Type.HOLDING]:
+                    if registry_type in self.protocolSettings.registry_map:
+                        for entry in self.protocolSettings.registry_map[registry_type]:
+                            entry.next_read_timestamp = 0
+
+    def cleanup(self):
+        """Clean up transport resources and close connections"""
+        with self._transport_lock:
+            self._log.info(f"Cleaning up transport {self.transport_name}")
+            
+            # Reset register timestamps to prevent sharing issues between transports
+            if hasattr(self, 'protocolSettings') and self.protocolSettings:
+                self.protocolSettings.reset_register_timestamps()
+            
+            # Close the modbus client connection
+            port_identifier = self._get_port_identifier()
+            if port_identifier in self.clients:
+                try:
+                    client = self.clients[port_identifier]
+                    if hasattr(client, 'close') and callable(client.close):
+                        client.close()
+                        self._log.info(f"Closed modbus client for {self.transport_name}")
+                except Exception as e:
+                    self._log.warning(f"Error closing modbus client for {self.transport_name}: {e}")
+                
+                # Remove from shared clients dict
+                with self._clients_lock:
+                    if port_identifier in self.clients:
+                        del self.clients[port_identifier]
+                        self._log.info(f"Removed client from shared dict for {self.transport_name}")
+            
+            # Mark as disconnected and reset first_connect for reconnection
+            self.connected = False
+            self.first_connect = False  # Reset so reconnection works properly
+            self._needs_reconnection = True  # Flag that this transport needs reconnection
+            self._log.info(f"Transport {self.transport_name} cleanup completed")
 
     def read_serial_number(self) -> str:
         # First try to read "Serial Number" from input registers (for protocols like EG4 v58)
@@ -165,48 +537,93 @@ class modbus_base(transport_base):
 
 
     def write_data(self, data : dict[str, str], from_transport : transport_base) -> None:
-        if not self.write_enabled:
-            return
+        # Use transport lock to prevent concurrent access to this transport instance
+        with self._transport_lock:
+            if not self.write_enabled:
+                return
 
-        registry_map = self.protocolSettings.get_registry_map(Registry_Type.HOLDING)
+            registry_map = self.protocolSettings.get_registry_map(Registry_Type.HOLDING)
 
-        for key, value in data.items():
-            for entry in registry_map:
-                if entry.variable_name == key:
+            for variable_name, value in data.items():
+                entry = None
+                for e in registry_map:
+                    if e.variable_name == variable_name:
+                        entry = e
+                        break
+
+                if entry:
                     self.write_variable(entry, value, Registry_Type.HOLDING)
-                    break
 
-        time.sleep(self.modbus_delay) #sleep inbetween requests so modbus can rest
+            time.sleep(self.modbus_delay) #sleep inbetween requests so modbus can rest
 
     def read_data(self) -> dict[str, str]:
-        info = {}
-        #modbus - only read input/holding registries
-        for registry_type in (Registry_Type.INPUT, Registry_Type.HOLDING):
+        # Use transport lock to prevent concurrent access to this transport instance
+        with self._transport_lock:
+            # Add debugging information
+            port_info = getattr(self, 'port', 'unknown')
+            address_info = getattr(self, 'address', 'unknown')
+            self._log.debug(f"Reading data from {self.transport_name}: address={address_info}, port={port_info}")
+            
+            info = {}
+            #modbus - only read input/holding registries
+            for registry_type in (Registry_Type.INPUT, Registry_Type.HOLDING):
 
-            #enable / disable input/holding register
-            if registry_type == Registry_Type.INPUT and not self.send_input_register:
-                continue
+                #enable / disable input/holding register
+                if registry_type == Registry_Type.INPUT and not self.send_input_register:
+                    continue
 
-            if registry_type == Registry_Type.HOLDING and not self.send_holding_register:
-                continue
+                if registry_type == Registry_Type.HOLDING and not self.send_holding_register:
+                    continue
 
-            #calculate ranges dynamically -- for variable read timing
-            ranges = self.protocolSettings.calculate_registry_ranges(self.protocolSettings.registry_map[registry_type],
-                                                                     self.protocolSettings.registry_map_size[registry_type],
-                                                                     timestamp=self.last_read_time)
+                #calculate ranges dynamically -- for variable read timing
+                ranges = self.protocolSettings.calculate_registry_ranges(self.protocolSettings.registry_map[registry_type],
+                                                                         self.protocolSettings.registry_map_size[registry_type],
+                                                                         timestamp=self.last_read_time)
 
-            registry = self.read_modbus_registers(ranges=ranges, registry_type=registry_type)
-            new_info = self.protocolSettings.process_registery(registry, self.protocolSettings.get_registry_map(registry_type))
+                self._log.info(f"Reading {registry_type.name} registers for {self.transport_name}: {len(ranges)} ranges")
+                if len(ranges) == 0:
+                    self._log.warning(f"No register ranges calculated for {self.transport_name} {registry_type.name}")
+                    # Debug: show protocol settings info
+                    if hasattr(self, 'protocolSettings') and self.protocolSettings:
+                        total_entries = len(self.protocolSettings.registry_map.get(registry_type, []))
+                        self._log.info(f"Protocol settings for {self.transport_name}: {total_entries} total entries for {registry_type.name}")
+                        
+                        # Count entries that would be read
+                        readable_entries = 0
+                        for entry in self.protocolSettings.registry_map.get(registry_type, []):
+                            if entry.write_mode != WriteMode.READDISABLED and entry.write_mode != WriteMode.WRITEONLY:
+                                readable_entries += 1
+                        self._log.info(f"Readable entries for {self.transport_name} {registry_type.name}: {readable_entries}")
+                
+                registry = self.read_modbus_registers(ranges=ranges, registry_type=registry_type)
+                
+                if registry:
+                    self._log.info(f"Got registry data for {self.transport_name} {registry_type.name}: {len(registry)} registers")
+                else:
+                    self._log.warning(f"No registry data returned for {self.transport_name} {registry_type.name}")
+                
+                new_info = self.protocolSettings.process_registery(registry, self.protocolSettings.get_registry_map(registry_type))
 
-            if False:
-                new_info = {self.__input_register_prefix + key: value for key, value in new_info.items()}
+                if False:
+                    new_info = {self.__input_register_prefix + key: value for key, value in new_info.items()}
 
-            info.update(new_info)
+                info.update(new_info)
 
-        if not info:
-            self._log.info("Register is Empty; transport busy?")
+            if not info:
+                self._log.info("Register is Empty; transport busy?")
 
-        return info
+            # Log disabled ranges status periodically (every 10 minutes)
+            if self.enable_register_failure_tracking and hasattr(self, '_last_disabled_status_log') and time.time() - self._last_disabled_status_log > 600:
+                disabled_ranges = self._get_disabled_ranges_info()
+                if disabled_ranges:
+                    self._log.info(f"Currently disabled register ranges: {len(disabled_ranges)}")
+                    for range_info in disabled_ranges:
+                        self._log.info(f"  - {range_info}")
+                self._last_disabled_status_log = time.time()
+            elif not hasattr(self, '_last_disabled_status_log'):
+                self._last_disabled_status_log = time.time()
+
+            return info
 
     def validate_protocol(self, protocolSettings : "protocol_settings") -> float:
         score_percent = self.validate_registry(Registry_Type.HOLDING)
@@ -552,6 +969,12 @@ class modbus_base(transport_base):
         index = -1
         while (index := index + 1) < len(ranges) :
             range = ranges[index]
+            
+            # Check if this register range is currently disabled
+            if self._is_register_range_disabled(range, registry_type):
+                remaining_hours = self._get_or_create_failure_tracker(range, registry_type).get_remaining_disable_time() / 3600
+                self._log.info(f"Skipping disabled register range {registry_type.name} {range[0]}-{range[0]+range[1]-1} (disabled for {remaining_hours:.1f}h)")
+                continue
 
             self._log.info("get registers ("+str(index)+"): " +str(registry_type)+ " - " + str(range[0]) + " to " + str(range[0]+range[1]-1) + " ("+str(range[1])+")")
             time.sleep(self.modbus_delay) #sleep for 1ms to give bus a rest #manual recommends 1s between commands
@@ -562,7 +985,7 @@ class modbus_base(transport_base):
                 register = self.read_registers(range[0], range[1], registry_type=registry_type)
 
             except ModbusIOException as e:
-                self._log.error("ModbusIOException: " + str(e))
+                self._log.error(f"ModbusIOException for {self.transport_name}: " + str(e))
                 # In pymodbus 3.7+, ModbusIOException doesn't have error_code attribute
                 # Treat all ModbusIOException as retryable errors
                 isError = True
@@ -574,7 +997,20 @@ class modbus_base(transport_base):
                 elif isinstance(register, bytes):
                     self._log.error(register.decode("utf-8"))
                 else:
-                    self._log.error(str(register))
+                    # Enhanced error logging with Modbus exception interpretation
+                    error_msg = str(register)
+                    
+                    # Check if this is an ExceptionResponse and extract the exception code
+                    if hasattr(register, 'function_code') and hasattr(register, 'exception_code'):
+                        exception_code = register.function_code | 0x80  # Convert to exception response code
+                        interpreted_error = interpret_modbus_exception_code(exception_code)
+                        self._log.debug(f"{error_msg} - {interpreted_error}")
+                    else:
+                        self._log.error(error_msg)
+                
+                # Record the failure for this register range
+                should_disable = self._record_register_read_failure(range, registry_type)
+                
                 self.modbus_delay += self.modbus_delay_increament #increase delay, error is likely due to modbus being busy
 
                 if self.modbus_delay > 60: #max delay. 60 seconds between requests should be way over kill if it happens
@@ -594,6 +1030,8 @@ class modbus_base(transport_base):
                 if self.modbus_delay < self.modbus_delay_setting:
                     self.modbus_delay = self.modbus_delay_setting
 
+            # Record successful read for this register range
+            self._record_register_read_success(range, registry_type)
 
             retry -= 1
             if retry < 0:
