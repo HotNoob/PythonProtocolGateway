@@ -9,7 +9,8 @@
 [![CodeQL](https://github.com/HotNoob/PythonProtocolGateway/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/HotNoob/PythonProtocolGateway/actions/workflows/github-code-scanning/codeql)
 
 For advanced configuration help, please checkout the documentation :)
-https://github.com/HotNoob/PythonProtocolGateway/tree/main/documentation
+
+[/documentation](/documentation)
 
 # Python Protocol Gateway
 
@@ -18,8 +19,9 @@ Configuration is handled via a small config files.
 In the long run, Python Protocol Gateway will become a general purpose protocol gateway to translate between more than just modbus and mqtt. 
 
 For specific device installation instructions please checkout the documentation:
-Growatt, EG4, Sigineer, SOK, PACE-BMS
-https://github.com/HotNoob/PythonProtocolGateway/tree/main/documentation
+Growatt, EG4, Sigineer, SOK, PACE-BMS, Sigineer, ect...
+
+[/documentation/devices](/documentation/devices)
 
 # General Installation
 Connect the USB port on the inverter into your computer / device. This port is essentially modbus usb adapter.
@@ -29,7 +31,7 @@ Alternatively, connect a usb adapter to your rs485 / can port with appropriate w
 
 ### install as homeassistant add-on
 checkout:
-https://github.com/felipecrs/python-protocol-gateway-hass-addon/tree/master
+[PPG HASS Addon](https://github.com/HotNoob/python-protocol-gateway-hass-addon/tree/master)
 
 ### install requirements
 ```
@@ -50,21 +52,30 @@ nano config.cfg
 manually select protocol in .cfg
 protocol_version = {{version}}
 ```
+eg4_v58 = eg4 inverters
+eg4_3000ehv_v1 = eg4 inverters
 v0.14 = growatt inverters 2020+
 sigineer_v0.11 = sigineer inverters
-growatt_2020_v1.24 = alt protocol for large growatt inverters - currently untested
-srne_v3.9 = SRNE inverters - confirmed working-ish
-victron_gx_3.3 = Victron GX Devices - Untested
-solark_v1.1 = SolarArk 8/12K Inverters - Untested
-hdhk_16ch_ac_module = some chinese current monitoring device :P
-srne_2021_v1.96 = SRNE inverters 2021+ (tested at ASF48100S200-H, ok-ish for HF2430U60-100 )
+srne_v3.9 = SRNE inverters
 
-eg4_v58 = eg4 inverters ( EG4-6000XP, EG4-12K, EG4-18K ) - confirmed working
-eg4_3000ehv_v1 = eg4 inverters ( EG4_3000EHV )
+hdhk_16ch_ac_module = some chinese current monitoring device :P
 ```
 
-more details on these protocols can be found in the documentation:
-https://github.com/HotNoob/PythonProtocolGateway/tree/main/documentation
+Untested Protocols
+```
+growatt_2020_v1.24 = alt protocol for large growatt inverters
+victron_gx_3.3 = Victron GX Devices
+solark_v1.1 = SolarArk 8/12K Inverters
+```
+
+For a complete list of protocols, explore:
+[/Protocols](/protocols)
+
+For a more complete list of tested devices & protocols:
+[Tested Devices & Protocols](documentation/usage/devices_and_protocols.csv)
+
+more advanced details can be found in the documentation:
+[/Documentation](/documentation)
 
 ### run as script
 ```
@@ -109,8 +120,8 @@ once installed; the device should show up on home assistant under mqtt
 
 ```Settings -> Devices & Services -> MQTT ```
 
-more docs on setting up mqtt here: https://www.home-assistant.io/integrations/mqtt
-i probably might have missed something. ha is new to me.
+more docs on setting up mqtt here: 
+https://www.home-assistant.io/integrations/mqtt
 
 #### connect mqtt on home assistant with external mqtt broker
 [HowTo Connect External MQTT Broker To HomeAssistant](https://www.youtube.com/watch?v=sP2gYLYQat8)
@@ -121,8 +132,6 @@ update files and restart script / service
 git pull
 systemctl restart protocol_gateway.service
 ```
-
-**if you installed this when it was called growatt2mqtt-hotnoob or invertermodbustomqtt, you'll need to reinstall if you want to update. **
 
 ### Unknown Status MQTT Home Assistant 
 If all values appear as "Unknown"
@@ -164,6 +173,6 @@ donations / sponsoring this repo would be appreciated.
 - ``` docker pull hotn00b/pythonprotocolgateway ``` 
 - ```docker run -v $(pwd)/config.cfg:/app/config.cfg --device=/dev/ttyUSB0 hotn00b/pythonprotocolgateway```
 
-See [config.cfg.example](https://github.com/HotNoob/PythonProtocolGateway/blob/main/config.cfg.example)
+See [config.cfg.example](/config.cfg.example)
 
 [Docker Image Repo](https://hub.docker.com/r/hotn00b/pythonprotocolgateway)
