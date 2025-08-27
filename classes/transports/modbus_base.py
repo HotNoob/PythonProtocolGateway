@@ -810,7 +810,7 @@ class modbus_base(transport_base):
     def write_variable(self, entry : registry_map_entry, value : str, registry_type : Registry_Type = Registry_Type.HOLDING):
         """ writes a value to a ModBus register; todo: registry_type to handle other write functions"""
 
-        value = value.strip()
+        value = value.strip().lower()
 
         temp_map = [entry]
         ranges = self.protocolSettings.calculate_registry_ranges(temp_map, self.protocolSettings.registry_map_size[registry_type], init=True) #init=True to bypass timechecks
@@ -820,6 +820,11 @@ class modbus_base(transport_base):
         #current_registers = self.read_modbus_registers(start=entry.register, end=entry.register, registry_type=registry_type)
         #current_value = current_registers[entry.register]
         current_value = info[entry.variable_name]
+        
+
+        #handle codes
+        value = self.protocolSettings.get_code_by_value(entry, value, fallback=value)
+        current_value = self.protocolSettings.get_code_by_value(entry, current_value, fallback=current_value)
 
         if not self.write_mode == TransportWriteMode.UNSAFE:
             if not self.protocolSettings.validate_registry_entry(entry, current_value):
@@ -829,14 +834,6 @@ class modbus_base(transport_base):
             if not (entry.data_type == Data_Type._16BIT_FLAGS or entry.data_type == Data_Type._8BIT_FLAGS or entry.data_type == Data_Type._32BIT_FLAGS): #skip validation for write; validate further down
                 if not self.protocolSettings.validate_registry_entry(entry, value):
                     return self._log.error(f"WRITE_ERROR: Invalid new value, '{value}'. Unsafe to write")
-
-        #handle codes
-        if entry.variable_name+"_codes" in self.protocolSettings.codes:
-            codes = self.protocolSettings.codes[entry.variable_name+"_codes"]
-            for key, val in codes.items():
-                if val == value: #convert "string" to key value
-                    value = key
-                    break
 
         #apply unit_mod before writing.
         if entry.unit_mod != 1:

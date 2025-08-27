@@ -112,7 +112,7 @@ class transport_base:
 
             #load a protocol_settings class for every transport; required for adv features. ie, variable timing.
             #must load after settings
-            self.protocol_version = settings.get("protocol_version")
+            self.protocol_version = settings.get("protocol_version", fallback='')
             if self.protocol_version:
                 # Create a deep copy of protocol settings to avoid shared state between transports
                 original_protocol_settings = protocol_settings(self.protocol_version, transport_settings=settings)

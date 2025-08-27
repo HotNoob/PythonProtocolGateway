@@ -1,0 +1,16 @@
+Brand,Model,Protocol,Transport,ReadMe
+AOLithium,51.2V 100Ah,voltronic_bms_2020_03_25,ModBus,https://github.com/HotNoob/PythonProtocolGateway/blob/main/documentation/devices/AOLithium.md
+AOLithium,51.2V 100Ah,victron_gx_generic_canbus,CanBus,https://github.com/HotNoob/PythonProtocolGateway/blob/main/documentation/devices/AOLithium.md
+EG4,EG4 18kPV,eg4_v58,ModBus,
+EG4,EG4 3000EHV ,eg4_3000ehv_v1 ,ModBus,
+EG4,EG4 6000XP ,eg4_v58,ModBus,
+EG4,MPPT100-48HV – unconfirmed,eg4_3000ehv_v1 ,ModBus,
+Growatt,SPF 12000T DVM-US MPV,v0.14,ModBus,
+Growatt,SPF 5000 ,v0.14,ModBus,
+Growatt,SPF 6000 ,v0.14,ModBus,
+Selphos,v3,growatt_bms_canbus_v1.04 ,CanBus,https://github.com/HotNoob/PythonProtocolGateway/discussions/88
+Sigineer,M3000H-48LV-3KW ,sigineer_v0.11,ModBus,https://github.com/HotNoob/PythonProtocolGateway/blob/main/documentation/devices/Sigineer.md
+SOK,48v100ah,pace_bms_v1.3 ,ModBus,https://github.com/HotNoob/PythonProtocolGateway/blob/main/documentation/devices/SOK.md
+SolArk,Untested,solark_v1.1 ,ModBus,
+SRNE,ASF48100S200-H ,srne_v3.9,ModBus,
+SRNE,HF2430U60-100 ,srne_v3.9,ModBus,

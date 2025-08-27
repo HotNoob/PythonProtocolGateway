@@ -338,6 +338,19 @@ class protocol_settings:
                 return item
 
         return None
+    
+    def get_code_by_value(self, entry : registry_map_entry, value : str, fallback=None) -> str:
+        ''' case insensitive '''
+        
+        value = value.strip().lower()
+
+        if entry.variable_name+"_codes" in self.codes:
+            codes = self.codes[entry.variable_name+"_codes"]
+            for code, val in codes.items():
+                if value == val.lower():
+                    return code
+                
+        return fallback
 
     def load__json(self, file : str = "", settings_dir : str = ""):
         if not settings_dir:

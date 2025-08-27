@@ -28,6 +28,7 @@ from configparser import ConfigParser, NoOptionError
 
 from classes.protocol_settings import protocol_settings, registry_map_entry
 from classes.transports.transport_base import transport_base
+from defs.common import strtobool
 
 __logo = """
 
@@ -50,13 +51,13 @@ __logo = """
 
 class CustomConfigParser(ConfigParser):
     def get(self, section, option, *args, **kwargs):
+        fallback = None
+
+        if "fallback" in kwargs: #override kwargs fallback, for manually handling here
+            fallback = kwargs["fallback"]
+            kwargs["fallback"] = None
+
         if isinstance(option, list):
-            fallback = None
-
-            if "fallback" in kwargs: #override kwargs fallback, for manually handling here
-                fallback = kwargs["fallback"]
-                kwargs["fallback"] = None
-
             for name in option:
                 try:
                     value = super().get(section, name, *args, **kwargs)
@@ -65,14 +66,20 @@ class CustomConfigParser(ConfigParser):
 
                 if value:
                     break
-
-            if not value:
-                value = fallback
-
-            if value is None:
-                raise NoOptionError(option[0], section)
         else:
-            value = super().get(section, option, *args, **kwargs)
+            try:
+                value = super().get(section, option, *args, **kwargs)
+            except NoOptionError:
+                value = None
+
+        if not value: #apply fallback
+            value = fallback
+
+        if value is None:
+            if isinstance(option, list):
+                raise NoOptionError(option[0], section)
+            else:
+                raise NoOptionError(option, section)
 
         if isinstance(value, int):
             return value
@@ -95,6 +102,10 @@ class CustomConfigParser(ConfigParser):
     def getfloat(self, section, option, *args, **kwargs): #bypass fallback bug
         value = self.get(section, option, *args, **kwargs)
         return float(value) if value is not None else None
+    
+    def getboolean(self, section, option, *args, **kwargs): #bypass fallback bug
+        value = self.get(section, option, *args, **kwargs)
+        return strtobool(value)
 
     def getboolean(self, section, option, *args, **kwargs): #bypass fallback bug and handle case-insensitive boolean values
         value = self.get(section, option, *args, **kwargs)
