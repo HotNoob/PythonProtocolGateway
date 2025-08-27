@@ -1,7 +1,7 @@
-import re
 import os
+import re
 
-import serial.tools.list_ports
+from serial.tools import list_ports
 
 
 def strtobool (val):
@@ -52,9 +52,13 @@ def get_usb_serial_port_info(port : str = "") -> str:
     if os.path.islink(port):
         port = os.path.realpath(port)
 
-    for p in serial.tools.list_ports.comports():
+    for p in list_ports.comports(): #from serial.tools
         if str(p.device).upper() == port.upper():
-            return "["+hex(p.vid)+":"+hex(p.pid)+":"+str(p.serial_number)+":"+str(p.location)+"]"
+            vid = hex(p.vid) if p.vid is not None else ""
+            pid = hex(p.pid) if p.pid is not None else ""
+            serial = str(p.serial_number) if p.serial_number is not None else ""
+            location = str(p.location) if p.location is not None else ""
+            return "["+vid+":"+pid+":"+serial+":"+location+"]"
 
     return ""
 
@@ -76,7 +80,7 @@ def find_usb_serial_port(port : str =  "", vendor_id : str = "", product_id : st
         serial_number = match.group("serial") if match.group("serial") else ""
         location = match.group("location") if match.group("location") else ""
 
-        for port in serial.tools.list_ports.comports():
+        for port in list_ports.comports(): #from serial.tools
             if ((not vendor_id or port.vid == vendor_id) and
                 ( not product_id or port.pid == product_id) and
                 ( not serial_number or port.serial_number == serial_number) and
