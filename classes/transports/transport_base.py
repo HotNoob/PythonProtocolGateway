@@ -1,4 +1,5 @@
 import logging
+import copy
 from enum import Enum
 from typing import TYPE_CHECKING, Callable
 
@@ -73,6 +74,7 @@ class transport_base:
     last_read_time : float = 0
 
     connected : bool = False
+    _needs_reconnection : bool = False
 
     on_message : Callable[["transport_base", registry_map_entry, str], None] = None
     ''' callback, on message recieved '''
@@ -112,7 +114,12 @@ class transport_base:
             #must load after settings
             self.protocol_version = settings.get("protocol_version", fallback='')
             if self.protocol_version:
-                self.protocolSettings = protocol_settings(self.protocol_version, transport_settings=settings)
+                # Create a deep copy of protocol settings to avoid shared state between transports
+                original_protocol_settings = protocol_settings(self.protocol_version, transport_settings=settings)
+                self.protocolSettings = copy.deepcopy(original_protocol_settings)
+                
+                # Update the transport settings reference in the copy
+                self.protocolSettings.transport_settings = settings
 
                 if self.protocolSettings:
                     self.protocol_version = self.protocolSettings.protocol
@@ -136,6 +143,14 @@ class transport_base:
             return cls._get_top_class_name(cls_obj.__bases__[0])
 
     def connect(self):
+        pass
+
+    def cleanup(self):
+        """Clean up transport resources and close connections"""
+        self._log.debug(f"Cleaning up transport {self.transport_name}")
+        # Base implementation - subclasses should override if needed
+        # Mark that this transport needs reconnection
+        self._needs_reconnection = True
         pass
 
     def write_data(self, data : dict[str, registry_map_entry], from_transport : "transport_base"):
