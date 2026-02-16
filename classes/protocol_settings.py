@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Union
 
-from defs.common import strtoint
+from defs.common import strtoint, strtobool_or_og
 
 if TYPE_CHECKING:
     from configparser import SectionProxy
@@ -223,6 +223,8 @@ class registry_map_entry:
 
     write_mode : WriteMode = WriteMode.READ
     ''' enable disable reading/writing '''
+
+    ha_disc : dict[str, any] = None
 
     def __str__(self):
         return self.variable_name
@@ -677,6 +679,13 @@ class protocol_settings:
             if "write" in row:
                 writeMode = WriteMode.fromString(row["write"])
 
+            ha_discovery = {}
+            if "ha discovery" in row and row["ha discovery"]:
+                ha_discovery = {key.strip().lower(): strtobool_or_og(value.strip().lower()) for key, value in dict(disc.split(":") for disc in row["ha discovery"].split(",")).items()}
+
+            else:
+                ha_discovery = dict({'p': 'sensor', 'enabled_by_default' : True})
+
             for i in r:
                 item = registry_map_entry(
                                             registry_type = registry_type,
@@ -698,7 +707,8 @@ class protocol_settings:
                                             value_regex=value_regex,
                                             read_command = read_command,
                                             read_interval=read_interval,
-                                            write_mode=writeMode
+                                            write_mode=writeMode,
+                                            ha_disc = ha_discovery
                                         )
                 registry_map.append(item)
 

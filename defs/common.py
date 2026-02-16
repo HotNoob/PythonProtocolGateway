@@ -17,6 +17,19 @@ def strtobool (val):
 
     return 0
 
+def strtobool_or_og(val):
+    """Convert a string representation of truth to boolean if it represents a boolean otherwise returns the original value.
+    True values are 'y', 'yes', 't', 'true', 'on', and '1'
+    False values are 'n', 'no', 'f', 'false', 'off', and '0'
+    """
+    if isinstance(val, str):
+        clean_val = val.strip().lower()
+        if clean_val in ("y", "yes", "t", "true", "on", "1"):
+            return True
+        elif clean_val in ("n", "no", "f", "false", "off", "0"):
+            return False
+    return val
+
 def strtoint(val : str) -> int:
     ''' converts str to int, but allows for hex string input, identified by x prefix'''
 
