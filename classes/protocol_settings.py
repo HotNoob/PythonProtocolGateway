@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Union
 
-from defs.common import strtoint
+from defs.common import strtoint, strtobool_or_og
 
 if TYPE_CHECKING:
     from configparser import SectionProxy
@@ -223,6 +223,8 @@ class registry_map_entry:
 
     write_mode : WriteMode = WriteMode.READ
     ''' enable disable reading/writing '''
+
+    ha_disc : dict[str, any] = None
 
     def __str__(self):
         return self.variable_name
@@ -677,6 +679,15 @@ class protocol_settings:
             if "write" in row:
                 writeMode = WriteMode.fromString(row["write"])
 
+            ha_discovery = {}
+            if "ha discovery" in row and row["ha discovery"]:
+                ha_discovery = {key.strip().lower(): strtobool_or_og(value.strip().lower()) for key, value in dict(disc.split(":") for disc in row["ha discovery"].split(",")).items()}
+
+            elif writeMode == WriteMode.WRITE or WriteMode.WRITEONLY:
+                ha_discovery = dict({'p': 'number', 'enabled_by_default' : True})
+            else:
+                ha_discovery = dict({'p': 'sensor', 'enabled_by_default' : True})
+
             for i in r:
                 item = registry_map_entry(
                                             registry_type = registry_type,
@@ -698,7 +709,8 @@ class protocol_settings:
                                             value_regex=value_regex,
                                             read_command = read_command,
                                             read_interval=read_interval,
-                                            write_mode=writeMode
+                                            write_mode=writeMode,
+                                            ha_disc = ha_discovery
                                         )
                 registry_map.append(item)
 
@@ -750,29 +762,29 @@ class protocol_settings:
                 item = registry_map[index]
                 if index > 0:
                     #if high/low, its a double
-                    if (
-                        item.documented_name.endswith("_l")
-                        and registry_map[index-1].documented_name.replace("_h", "_l") == item.documented_name
-                        ):
-                        combined_item = registry_map[index-1]
+                    if (item.documented_name.endswith("_l")):
+                        if (registry_map[index-1].documented_name.replace("_h", "_l") == item.documented_name):
+                            combined_item = registry_map[index-1]
+                        elif (registry_map[index+1].documented_name.replace("_h", "_l") == item.documented_name):
+                            combined_item = registry_map[index+1]
 
-                        if not combined_item.data_type or combined_item.data_type  == Data_Type.USHORT:
-                            if registry_map[index].data_type != Data_Type.USHORT:
-                                combined_item.data_type = registry_map[index].data_type
-                            else:
-                                combined_item.data_type = Data_Type.UINT
+                            if not combined_item.data_type or combined_item.data_type  == Data_Type.USHORT:
+                                if registry_map[index].data_type != Data_Type.USHORT:
+                                    combined_item.data_type = registry_map[index].data_type
+                                else:
+                                    combined_item.data_type = Data_Type.UINT
 
 
-                        if combined_item.documented_name == combined_item.variable_name:
-                            combined_item.variable_name = combined_item.variable_name[:-2].strip()
+                            if combined_item.documented_name == combined_item.variable_name:
+                                combined_item.variable_name = combined_item.variable_name[:-2].strip()
 
-                        combined_item.documented_name = combined_item.documented_name[:-2].strip()
+                            combined_item.documented_name = combined_item.documented_name[:-2].strip()
 
-                        if not combined_item.unit: #fix inconsistsent documentation
-                            combined_item.unit = registry_map[index].unit
-                            combined_item.unit_mod = registry_map[index].unit_mod
+                            if not combined_item.unit: #fix inconsistsent documentation
+                                combined_item.unit = registry_map[index].unit
+                                combined_item.unit_mod = registry_map[index].unit_mod
 
-                        del registry_map[index]
+                            del registry_map[index]
 
             #apply mask
             if self.variable_mask:
