@@ -212,6 +212,10 @@ class registry_map_entry:
     data_byteorder : str = ''
     ''' entry specific byte order little | big | '' '''
 
+    high_byte : int = -1
+
+    low_byte : int = -1
+
     read_command : bytes = None
     ''' for transports/protocols that require sending a command ontop of "register" '''
 
@@ -750,29 +754,40 @@ class protocol_settings:
                 item = registry_map[index]
                 if index > 0:
                     #if high/low, its a double
-                    if (
-                        item.documented_name.endswith("_l")
-                        and registry_map[index-1].documented_name.replace("_h", "_l") == item.documented_name
-                        ):
-                        combined_item = registry_map[index-1]
-
+                    if item.documented_name.endswith("_l"):
+                        if registry_map[index-1].documented_name.replace("_h", "_l") == item.documented_name:
+                            first_byte = index-1
+                            last_byte = index
+                            high_byte = registry_map[first_byte].register
+                            low_byte = registry_map[last_byte].register
+                            
+                        if registry_map[index+1].documented_name.replace("_h", "_l") == item.documented_name:
+                            first_byte = index
+                            last_byte = index+1
+                            high_byte = registry_map[last_byte].register
+                            low_byte = registry_map[first_byte].register
+                            
+                        combined_item = registry_map[first_byte]
                         if not combined_item.data_type or combined_item.data_type  == Data_Type.USHORT:
-                            if registry_map[index].data_type != Data_Type.USHORT:
-                                combined_item.data_type = registry_map[index].data_type
+                            if registry_map[last_byte].data_type != Data_Type.USHORT:
+                                combined_item.data_type = registry_map[last_byte].data_type
                             else:
                                 combined_item.data_type = Data_Type.UINT
-
 
                         if combined_item.documented_name == combined_item.variable_name:
                             combined_item.variable_name = combined_item.variable_name[:-2].strip()
 
                         combined_item.documented_name = combined_item.documented_name[:-2].strip()
 
-                        if not combined_item.unit: #fix inconsistsent documentation
-                            combined_item.unit = registry_map[index].unit
-                            combined_item.unit_mod = registry_map[index].unit_mod
+                        #assume high byte is first
+                        combined_item.high_byte = high_byte
+                        combined_item.low_byte = low_byte
 
-                        del registry_map[index]
+                        if not combined_item.unit: #fix inconsistsent documentation
+                            combined_item.unit = registry_map[last_byte].unit
+                            combined_item.unit_mod = registry_map[last_byte].unit_mod
+
+                        del registry_map[last_byte]
 
             #apply mask
             if self.variable_mask:
@@ -1041,7 +1056,10 @@ class protocol_settings:
             if entry.register + 1 not in registry:
                 return
 
-            value = float((registry[entry.register] << 16) + registry[entry.register + 1])
+            if entry.high_byte != -1 and entry.low_byte != -1:
+                value = float((registry[entry.high_byte] << 16) + registry[entry.low_byte])
+            else:
+                value = float((registry[entry.register] << 16) + registry[entry.register + 1])
         elif entry.data_type == Data_Type.SHORT: #read signed short
             val = registry[entry.register]
 
