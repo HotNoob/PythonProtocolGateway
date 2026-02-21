@@ -779,7 +779,6 @@ class protocol_settings:
 
                         combined_item.documented_name = combined_item.documented_name[:-2].strip()
 
-                        #assume high byte is first
                         combined_item.high_byte = high_byte
                         combined_item.low_byte = low_byte
 
@@ -1056,20 +1055,24 @@ class protocol_settings:
             if entry.register + 1 not in registry:
                 return
 
+            #check if the high and low byte registers were set correctly
             if entry.high_byte != -1 and entry.low_byte != -1:
+                #set the value based on the high/low registers
                 value = float((registry[entry.high_byte] << 16) + registry[entry.low_byte])
             else:
+                #if setting the register high/low values was messed up somewhere, just use high low order (EG4 uses low high and is the reason for this...)
                 value = float((registry[entry.register] << 16) + registry[entry.register + 1])
         elif entry.data_type == Data_Type.SHORT: #read signed short
             val = registry[entry.register]
 
             # Convert the combined unsigned value to a signed integer if necessary
-            if val & (1 << 15):  # Check if the sign bit (bit 31) is set
+            if val & (1 << 15):  # Check if the sign bit (bit 15) is set
                 # Perform two's complement conversion to get the signed integer
                 value = val - (1 << 16)
             else:
                 value = val
-            value = -value
+        #this seems redundant?
+            #value = -value
         elif entry.data_type == Data_Type.INT: #read int
             if entry.register + 1 not in registry:
                 return
@@ -1082,7 +1085,9 @@ class protocol_settings:
                 value = combined_value_unsigned - (1 << 32)
             else:
                 value = combined_value_unsigned
-            value = -value
+        #this seems redundant?
+            #value = -value
+            
             #value = struct.unpack('<h', bytes([min(max(registry[item.register], 0), 255), min(max(registry[item.register+1], 0), 255)]))[0]
             #value = int.from_bytes(bytes([registry[item.register], registry[item.register + 1]]), byteorder='little', signed=True)
         elif entry.data_type == Data_Type._16BIT_FLAGS or entry.data_type == Data_Type._8BIT_FLAGS or entry.data_type == Data_Type._32BIT_FLAGS:
