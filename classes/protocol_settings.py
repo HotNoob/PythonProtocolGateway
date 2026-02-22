@@ -762,18 +762,17 @@ class protocol_settings:
                 item = registry_map[index]
                 if index > 0:
                     #if high/low, its a double
-                    if (item.documented_name.endswith("_l")):
-                        if (registry_map[index-1].documented_name.replace("_h", "_l") == item.documented_name):
+                    if (
+                        item.documented_name.endswith("_l")
+                        and registry_map[index-1].documented_name.replace("_h", "_l") == item.documented_name
+                        ):
                             combined_item = registry_map[index-1]
-                        elif (registry_map[index+1].documented_name.replace("_h", "_l") == item.documented_name):
-                            combined_item = registry_map[index+1]
 
                             if not combined_item.data_type or combined_item.data_type  == Data_Type.USHORT:
                                 if registry_map[index].data_type != Data_Type.USHORT:
                                     combined_item.data_type = registry_map[index].data_type
                                 else:
                                     combined_item.data_type = Data_Type.UINT
-
 
                             if combined_item.documented_name == combined_item.variable_name:
                                 combined_item.variable_name = combined_item.variable_name[:-2].strip()

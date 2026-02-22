@@ -165,8 +165,7 @@ class mqtt(transport_base):
         self._log.info(data)
         #have to send this every loop, because mqtt doesnt disconnect when HA restarts. HA bug.
         
-        #If this is retain= false I think it'll stp showing everything online when PPG disconnects
-        info = self.client.publish(self.base_topic + "/" + from_transport.device_identifier + "/availability","online", qos=0,retain=False)
+        info = self.client.publish(self.base_topic + "/" + from_transport.device_identifier + "/availability","online", qos=0,retain=True)
 
         if info.rc == MQTT_ERR_NO_CONN:
             self.connected = False
@@ -301,6 +300,6 @@ class mqtt(transport_base):
             self.client.publish(t, val)
             time.sleep(0.07) #slow down for better reliability
 
-        self.client.publish(disc_payload["availability_topic"],"online",qos=0, retain=False)
+        self.client.publish(disc_payload["availability_topic"],"online",qos=0, retain=True)
         print()
         self._log.info("Published HA "+str(count)+"x Discovery Topics")
