@@ -3,3 +3,4 @@ paho-mqtt
 pyserial
 python-can
 influxdb
+tomli

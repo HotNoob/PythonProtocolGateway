@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "python-protocol-gateway"
-version = "1.1.10"
+version = "1.1.11-HA_Discovery_Improvements"
 description = "Python Protocol Gateway reads data via Modbus RTU or other protocols and translates the data for MQTT. In the long run, Python Protocol Gateway will become a general purpose protocol gateway to translate between more than just modbus and mqtt."
 readme = "README.md"
 license = "Apache-2.0"

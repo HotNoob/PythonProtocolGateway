@@ -12,7 +12,7 @@ import paho.mqtt.properties
 from paho.mqtt.client import MQTT_ERR_NO_CONN
 from paho.mqtt.client import Client as MQTTClient
 
-from defs.common import strtobool
+from defs.common import project_details, strtobool
 
 from ..protocol_settings import Registry_Type, WriteMode, registry_map_entry
 from .transport_base import transport_base
@@ -231,11 +231,11 @@ class mqtt(transport_base):
         device["identifiers"] = "hotnoob_" + from_transport.device_model + "_" + from_transport.device_serial_number
         device["name"] = from_transport.device_name
 
-        #these should probably be read dynamically so it updates automatically on releases...
+        data = project_details()
         origin = {}
-        origin["name"] = "python-protocol-gateway"
-        origin["sw"] = "1.1.11-dev"
-        origin["url"] = "https://github.com/HotNoob/PythonProtocolGateway"
+        origin["name"] = data['project']['name']
+        origin["sw"] = data['project']['version']
+        origin["url"] = data['project']['urls']['Homepage']
 
         registry_map : list[registry_map_entry] = []
         for entries in from_transport.protocolSettings.registry_map.values():

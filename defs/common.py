@@ -3,6 +3,20 @@ import re
 
 from serial.tools import list_ports
 
+import tomli
+
+def project_details():
+    try:
+        par_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+        file_path = os.path.join(par_dir, 'pyproject.toml')
+        with open(file_path, 'rb') as f:
+            data = tomli.load(f)
+            return data
+    except FileNotFoundError:
+        print(f"Error: The file '{file_path}' was not found.")
+    except tomli.TOMLDecodeError:
+        print("Error: Could not decode the TOML file. Check for syntax errors.")
+
 
 def strtobool (val):
     """Convert a string representation of truth to true (1) or false (0).
