@@ -166,8 +166,6 @@ class modbus_base(transport_base):
             else:
                 self._log.error("enable write FAILED - WRITE DISABLED")
 
-
-
     def write_data(self, data : dict[str, str], from_transport : transport_base) -> None:
         if not self.write_enabled:
             return
@@ -215,7 +213,6 @@ class modbus_base(transport_base):
     def validate_protocol(self, protocolSettings : "protocol_settings") -> float:
         score_percent = self.validate_registry(Registry_Type.HOLDING)
         return score_percent
-
 
     def validate_registry(self, registry_type : Registry_Type = Registry_Type.INPUT) -> float:
         score : float = 0
@@ -393,7 +390,6 @@ class modbus_base(transport_base):
             self._log.debug("input register score: " + str(input_register_score[name]) + "; valid registers: "+str(input_valid_count[name])+" of " + str(len(protocols[name].get_registry_map(Registry_Type.INPUT))))
             self._log.debug("holding register score : " + str(holding_register_score[name]) + "; valid registers: "+str(holding_valid_count[name])+" of " + str(len(protocols[name].get_registry_map(Registry_Type.HOLDING))))
 
-
     def write_variable(self, entry : registry_map_entry, value : str, registry_type : Registry_Type = Registry_Type.HOLDING):
         """ writes a value to a ModBus register; todo: registry_type to handle other write functions"""
 
@@ -492,7 +488,6 @@ class modbus_base(transport_base):
         self._log.info(f"WRITE: {current_value} => {value} ( {registry[entry.register]} => {ushortValue} ) to Register {entry.register}")
         self.write_register(entry.register, ushortValue)
         #entry.next_read_timestamp = 0 #ensure is read next interval
-
 
     def read_variable(self, variable_name : str, registry_type : Registry_Type, entry : registry_map_entry = None):
         ##clean for convinecne

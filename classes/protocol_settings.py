@@ -595,7 +595,7 @@ class protocol_settings:
                             end = strtoint(groups["range_end"])
                             values.extend(range(start, end + 1))
                         else:
-                            values.append(groups["element"])
+                            values.append(strtoint(groups["element"]))
                 else:
                     matched : bool = False
                     val_match = range_regex.search(row["values"])
@@ -682,11 +682,6 @@ class protocol_settings:
             ha_discovery = {}
             if "ha discovery" in row and row["ha discovery"]:
                 ha_discovery = {key.strip().lower(): strtobool_or_og(value.strip().lower()) for key, value in dict(disc.split(":") for disc in row["ha discovery"].split(",")).items()}
-
-            elif writeMode == WriteMode.WRITE or WriteMode.WRITEONLY:
-                ha_discovery = dict({'p': 'number', 'enabled_by_default' : True})
-            else:
-                ha_discovery = dict({'p': 'sensor', 'enabled_by_default' : True})
 
             for i in r:
                 item = registry_map_entry(
@@ -1227,8 +1222,14 @@ class protocol_settings:
                                 return len(entry.concatenate_registers)
 
             else: #default type
-                intval = int(val)
-                if intval >= entry.value_min and intval <= entry.value_max:
+                #apply unit mod before comparison to min/maxes
+                if entry.unit_mod != 1:
+                    intval = int(float(val) / entry.unit_mod)
+                else:
+                    intval = int(val)
+                if intval in entry.values:
+                    return 1
+                elif intval >= entry.value_min and intval <= entry.value_max:
                     return 1
 
                 self._log.error(f"validate_registry_entry '{entry.variable_name}' fail (INT) {intval} != {entry.value_min}~{entry.value_max}")

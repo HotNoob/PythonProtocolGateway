@@ -37,6 +37,7 @@ def strtoint(val : str) -> int:
         return val
 
     val = val.lower().strip()
+    val = re.sub(r'^\W+|\W+$', '', val)
 
     if val and val[0] == "x":
         val = val[1:]

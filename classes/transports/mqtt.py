@@ -17,6 +17,19 @@ from defs.common import strtobool
 from ..protocol_settings import Registry_Type, WriteMode, registry_map_entry
 from .transport_base import transport_base
 
+unit_to_discovery = {
+    'kwh'   :   dict({'device_class':'energy','state_class':'total','mdi':'meter-electric','enabled_by_default':True}),
+    'wh'    :   dict({'device_class':'energy','state_class':'total','mdi':'meter-electric','enabled_by_default':True}),
+    'v'     :   dict({'device_class':'voltage','state_class':'measurement','mdi':'lightning-bolt','enabled_by_default':True}),
+    'va'    :   dict({'device_class':'apparent_power','state_class':'measurement','enabled_by_default':True}),
+    'a'     :   dict({'device_class':'current','state_class':'measurement','mdi':'current-ac','enabled_by_default':True}),
+    'w'     :   dict({'device_class':'power','state_class':'measurement','mdi':'power','enabled_by_default':True}),
+    's'     :   dict({'device_class':'duration','state_class':'measurement','mdi':'timer','enabled_by_default':True}),
+    'ms'    :   dict({'device_class':'duration','state_class':'measurement','mdi':'timer','enabled_by_default':True}),
+    '°c'     :   dict({'device_class':'temperature','state_class':'measurement','mdi':'thermometer','enabled_by_default':True}),
+    'hz'    :   dict({'device_class':'frequency','state_class':'measurement','enabled_by_default':True})
+    }
+
 
 class mqtt(transport_base):
     ''' for future; this will hold mqtt transport'''
@@ -266,8 +279,46 @@ class mqtt(transport_base):
             disc_payload["cmps"][unique_id] = {}
             disc_payload["cmps"][unique_id]["name"] = clean_name
             disc_payload["cmps"][unique_id]["unique_id"] = unique_id
-            disc_payload["cmps"][unique_id].update(item.ha_disc)
+            disc_payload["cmps"][unique_id].update(dict({'enabled_by_default': 'true'}))
 
+            if item.unit:
+                disc_payload["cmps"][unique_id]["unit_of_measurement"] = item.unit
+
+                for key, value in unit_to_discovery.items():
+                    if str(item.unit).lower() == key:
+                        disc_payload["cmps"][unique_id].update(value)
+                        break
+
+            disc_payload["cmps"][unique_id].update(dict({'p': 'sensor'}))
+
+            if from_transport.write_enabled:
+                if item.write_mode == WriteMode.WRITE or WriteMode.WRITEONLY:
+                    #determine appropriate command topic
+                    for key, value in self._mqtt__write_topics.items():
+                        if value == item:
+                            disc_payload["cmps"][unique_id].update(dict({'command_topic': key}))
+                            
+                            if item.variable_name+"_codes" in from_transport.protocolSettings.codes:
+                                codes = from_transport.protocolSettings.codes[item.variable_name+"_codes"]
+                                disc_payload["cmps"][unique_id].update(dict({'options': list(codes.values()) }))
+                                disc_payload["cmps"][unique_id].update(dict({'p': 'select'}))
+                            else:
+                                #if the min/max is 0/1 then its probably a switch rather than a number entry
+                                if item.value_min == 0 and item.value_max == 1:
+                                    disc_payload["cmps"][unique_id].update(dict({'p': 'switch'}))
+                                    disc_payload["cmps"][unique_id].update(dict({'payload_on': 1}))
+                                    disc_payload["cmps"][unique_id].update(dict({'payload_off': 0}))
+                                #if there is only one value its probably a button rather than a number
+                                elif item.value_min == 1 and item.value_max == 1:
+                                    disc_payload["cmps"][unique_id].update(dict({'p': 'button'}))
+                                    disc_payload["cmps"][unique_id].update(dict({'payload_press': 1})) 
+                                else:
+                                    disc_payload["cmps"][unique_id].update(dict({'p': 'number'}))
+                                disc_payload["cmps"][unique_id].update(dict({'min': item.value_min * item.unit_mod}))
+                                disc_payload["cmps"][unique_id].update(dict({'max': item.value_max * item.unit_mod}))
+                            break
+
+            disc_payload["cmps"][unique_id].update(item.ha_disc)
 
             writePrefix = ""
             if from_transport.write_enabled and ( item.write_mode == WriteMode.WRITE or item.write_mode == WriteMode.WRITEONLY ):
@@ -275,16 +326,13 @@ class mqtt(transport_base):
 
             disc_payload["cmps"][unique_id]["state_topic"] = self.base_topic + "/" + from_transport.device_identifier + writePrefix+ "/" + clean_name
 
-            if item.unit:
-                disc_payload["cmps"][unique_id]["unit_of_measurement"] = item.unit
-
             discovery_topic = self.discovery_topic+"/device/HN-" + from_transport.device_serial_number  + writePrefix + "/config"
 
             #add WO message to be sent later to indicate topic is write only
             if item.write_mode == WriteMode.WRITEONLY:
                 write_only[disc_payload["cmps"][unique_id]["state_topic"]] = "WRITEONLY"
 
-            #break up items into batches to make the messages smaller
+            #break up items into batches to make the messages smaller (10 was arbitrarily picked but it seems to work well enough)
             if len(disc_payload["cmps"]) > 10:
                 self.client.publish(discovery_topic, json.dumps(disc_payload),qos=1, retain=True)
                 #reset component list for next batch
