@@ -401,9 +401,10 @@ class protocol_settings:
 
         data_type_regex = re.compile(r"(?P<datatype>\w+)\.(?P<length>\d+)")
 
-        range_regex = re.compile(r"(?P<reverse>r|)(?P<start>(?:0?x[\da-z]+|[\d]+))[\-~](?P<end>(?:0?x[\da-z]+|[\d]+))")
+        #f... cant do -100 to -25 for example, due to - as divider. might have to do all ranges with ~?
+        range_regex = re.compile(r"(?P<reverse>r|)(?P<start>(?:0?x[\-\da-z]+|[\d]+))[\-~](?P<end>(?:0?x[\da-z]+|[\d]+))")
         ascii_value_regex = re.compile(r"(?P<regex>^\[.+\]$)")
-        list_regex = re.compile(r"\s*(?:(?P<range_start>(?:0?x[\da-z]+|[\d]+))-(?P<range_end>(?:0?x[\da-z]+|[\d]+))|(?P<element>[^,\s][^,]*?))\s*(?:,|$)")
+        list_regex = re.compile(r"\s*(?:(?P<range_start>(?:0?x[\-\da-z]+|[\d]+))[\-~](?P<range_end>(?:0?x[\da-z]+|[\d]+))|(?P<element>[^,\s][^,]*?))\s*(?:,|$)")
 
 
         #load read_interval from transport settings, for #x per register read intervals
