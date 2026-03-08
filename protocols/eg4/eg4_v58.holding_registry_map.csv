@@ -159,7 +159,7 @@ variable name,data type,register,documented name,unit,values,writable,note,ha di
 ,,116,PtoUserStartdischg,1W,50W-,W,Ptouser: value of discharging initiate,,,,
 ,,117,PtoUserStartchg,1W,- -50W,W,Ptouser: starts AC charging less than this value,,,,
 ,,118,VbatStartDerating,0.1V,>CutVoltForDisc hg+2V,W,For lead-acid battery,,,,
-,short,119,wCT_PowerOffset,1W,- 1000W~1000W,W,"signed short int; CT Power compensation, PtoUser direction is positive.",,,,
+,short,119,wCT_PowerOffset,1W,-1000~1000,W,"signed short int; CT Power compensation, PtoUser direction is positive.",,,,
 ,1bit,120,stSysEnable_bit_HalfHourACChrStartEn,Bit0,0~1,W,1,,,,
 ,3bit,120.b1,stSysEnable_bit_ACChargeType,,"{""0"":""disable"",""1"":""according to time"",""2"":""according to voltage"",""3"":""according to SOC"",""4"":""according to VoltageandTime"",""5"":""according to SOC and Time""}",W,0-disable 1-according to time 2-accoridng to voltage 3-according to SOC For 12K: 0 - according to time4-according to VoltageandTime5-according to SOC andTime,,,,
 ,2bit,120.b4,stSysEnable_bit_DischgCtrlType,,"{""0"":""according to voltage"",""1"":""according to SOC"",""2"":""according to both""}",W,0-according to voltage 1- according to SOC 2- according to both,,,,
