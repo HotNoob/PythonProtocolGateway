@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Union
 
-from defs.common import strtoint
+from defs.common import strtoint, strtobool_or_og
 
 if TYPE_CHECKING:
     from configparser import SectionProxy
@@ -224,6 +224,8 @@ class registry_map_entry:
     write_mode : WriteMode = WriteMode.READ
     ''' enable disable reading/writing '''
 
+    ha_disc : dict[str, any] = None
+
     def __str__(self):
         return self.variable_name
 
@@ -398,9 +400,9 @@ class protocol_settings:
         data_type_regex = re.compile(r"(?P<datatype>\w+)\.(?P<length>\d+)")
 
         #f... cant do -100 to -25 for example, due to - as divider. might have to do all ranges with ~?
-        range_regex = re.compile(r"(?P<reverse>r|)(?P<start>(?:0?x[\-\da-z]+|[\d]+))[\-~](?P<end>(?:0?x[\da-z]+|[\d]+))")
+        range_regex = re.compile(r"(?P<reverse>r|)(?P<start>(?:0?x[\da-z]+|[\-\d]+))[\-~](?P<end>(?:0?x[\da-z]+|[\d]+))")
         ascii_value_regex = re.compile(r"(?P<regex>^\[.+\]$)")
-        list_regex = re.compile(r"\s*(?:(?P<range_start>(?:0?x[\-\da-z]+|[\d]+))[\-~](?P<range_end>(?:0?x[\da-z]+|[\d]+))|(?P<element>[^,\s][^,]*?))\s*(?:,|$)")
+        list_regex = re.compile(r"\s*(?:(?P<range_start>(?:0?x[\da-z]+|[\-\d]+))[\-~](?P<range_end>(?:0?x[\da-z]+|[\d]+))|(?P<element>[^,\s][^,]*?))\s*(?:,|$)")
 
 
         #load read_interval from transport settings, for #x per register read intervals
@@ -594,7 +596,7 @@ class protocol_settings:
                             end = strtoint(groups["range_end"])
                             values.extend(range(start, end + 1))
                         else:
-                            values.append(groups["element"])
+                            values.append(strtoint(groups["element"]))
                 else:
                     matched : bool = False
                     val_match = range_regex.search(row["values"])
@@ -678,6 +680,10 @@ class protocol_settings:
             if "write" in row:
                 writeMode = WriteMode.fromString(row["write"])
 
+            ha_discovery = {}
+            if "ha discovery" in row and row["ha discovery"]:
+                ha_discovery = {key.strip().lower(): strtobool_or_og(value.strip().lower()) for key, value in dict(disc.split(":") for disc in row["ha discovery"].split(",")).items()}
+
             for i in r:
                 item = registry_map_entry(
                                             registry_type = registry_type,
@@ -699,7 +705,8 @@ class protocol_settings:
                                             value_regex=value_regex,
                                             read_command = read_command,
                                             read_interval=read_interval,
-                                            write_mode=writeMode
+                                            write_mode=writeMode,
+                                            ha_disc = ha_discovery
                                         )
                 registry_map.append(item)
 
@@ -762,7 +769,6 @@ class protocol_settings:
                                 combined_item.data_type = registry_map[index].data_type
                             else:
                                 combined_item.data_type = Data_Type.UINT
-
 
                         if combined_item.documented_name == combined_item.variable_name:
                             combined_item.variable_name = combined_item.variable_name[:-2].strip()
@@ -1217,8 +1223,14 @@ class protocol_settings:
                                 return len(entry.concatenate_registers)
 
             else: #default type
-                intval = int(val)
-                if intval >= entry.value_min and intval <= entry.value_max:
+                #apply unit mod before comparison to min/maxes
+                if entry.unit_mod != 1:
+                    intval = int(float(val) / entry.unit_mod)
+                else:
+                    intval = int(val)
+                if intval in entry.values:
+                    return 1
+                elif intval >= entry.value_min and intval <= entry.value_max:
                     return 1
 
                 self._log.error(f"validate_registry_entry '{entry.variable_name}' fail (INT) {intval} != {entry.value_min}~{entry.value_max}")

@@ -6,6 +6,7 @@ GitHub - https://github.com/HotNoob/PythonProtocolGateway/releases
 PyPi Package - https://pypi.org/project/python-protocol-gateway/
 ```
 pyproject.toml -> version
+defs/common.py -> version
 ```
 ```
 python -m build

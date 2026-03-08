@@ -39,3 +39,5 @@ inflxudb_backlog/*
 
 #ignore dumps for dev
 tools/dumps/*
+/.vs/PythonProtocolGateway.slnx/FileContentIndex
+/.vs

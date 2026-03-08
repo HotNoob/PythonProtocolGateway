@@ -1,8 +1,10 @@
 import atexit
 import json
 import random
+import sys
 import time
 import warnings
+import copy
 from configparser import SectionProxy
 
 import paho.mqtt.client
@@ -11,10 +13,23 @@ import paho.mqtt.properties
 from paho.mqtt.client import MQTT_ERR_NO_CONN
 from paho.mqtt.client import Client as MQTTClient
 
-from defs.common import strtobool
+from defs.common import strtobool, project_properties
 
 from ..protocol_settings import Registry_Type, WriteMode, registry_map_entry
 from .transport_base import transport_base
+
+unit_to_discovery = {
+    'kwh'   :   dict({'device_class':'energy','state_class':'total','mdi':'meter-electric','enabled_by_default':True}),
+    'wh'    :   dict({'device_class':'energy','state_class':'total','mdi':'meter-electric','enabled_by_default':True}),
+    'v'     :   dict({'device_class':'voltage','state_class':'measurement','mdi':'lightning-bolt','enabled_by_default':True}),
+    'va'    :   dict({'device_class':'apparent_power','state_class':'measurement','enabled_by_default':True}),
+    'a'     :   dict({'device_class':'current','state_class':'measurement','mdi':'current-ac','enabled_by_default':True}),
+    'w'     :   dict({'device_class':'power','state_class':'measurement','mdi':'power','enabled_by_default':True}),
+    's'     :   dict({'device_class':'duration','state_class':'measurement','mdi':'timer','enabled_by_default':True}),
+    'ms'    :   dict({'device_class':'duration','state_class':'measurement','mdi':'timer','enabled_by_default':True}),
+    '°c'    :   dict({'device_class':'temperature','state_class':'measurement','mdi':'thermometer','enabled_by_default':True}),
+    'hz'    :   dict({'device_class':'frequency','state_class':'measurement','enabled_by_default':True})
+    }
 
 
 class mqtt(transport_base):
@@ -163,7 +178,9 @@ class mqtt(transport_base):
         self._log.info(f"write data from [{from_transport.transport_name}] to mqtt transport")
         self._log.info(data)
         #have to send this every loop, because mqtt doesnt disconnect when HA restarts. HA bug.
+        
         info = self.client.publish(self.base_topic + "/" + from_transport.device_identifier + "/availability","online", qos=0,retain=True)
+
         if info.rc == MQTT_ERR_NO_CONN:
             self.connected = False
 
@@ -215,9 +232,23 @@ class mqtt(transport_base):
         device["identifiers"] = "hotnoob_" + from_transport.device_model + "_" + from_transport.device_serial_number
         device["name"] = from_transport.device_name
 
+        origin = {}
+        origin["name"] = project_properties['name']
+        origin["sw"] = project_properties['version']
+        origin["url"] = project_properties['url']
+
         registry_map : list[registry_map_entry] = []
         for entries in from_transport.protocolSettings.registry_map.values():
             registry_map.extend(entries)
+
+        disc_payload_base = {}
+        disc_payload_base["availability_topic"] = self.base_topic + "/" + from_transport.device_identifier + "/availability"
+        disc_payload_base["device"] = device
+        disc_payload_base["origin"] = origin
+        disc_payload_base["cmps"] = {}
+        disc_payload = copy.deepcopy(disc_payload_base)
+
+        write_only = {}
 
         length = len(registry_map)
         count = 0
@@ -230,7 +261,6 @@ class mqtt(transport_base):
             if item.write_mode == WriteMode.READDISABLED: #disabled
                 continue
 
-
             clean_name = item.variable_name.lower().replace(" ", "_").strip()
             if not clean_name: #if name is empty, skip
                 continue
@@ -242,35 +272,80 @@ class mqtt(transport_base):
                 if self.__holding_register_prefix and item.registry_type == Registry_Type.HOLDING:
                     clean_name = self.__holding_register_prefix + clean_name
 
-
             print(("#Publishing Topic "+str(count)+" of " + str(length) + ' "'+str(clean_name)+'"').ljust(100)+"#", end="\r", flush=True)
 
             #device['sw_version'] = bms_version
-            disc_payload = {}
-            disc_payload["availability_topic"] = self.base_topic + "/" + from_transport.device_identifier + "/availability"
-            disc_payload["device"] = device
-            disc_payload["name"] = clean_name
-            disc_payload["unique_id"] = "hotnoob_" + from_transport.device_serial_number + "_"+clean_name
+            unique_id = "hotnoob_" + from_transport.device_serial_number + "_" + clean_name
+            disc_payload["cmps"][unique_id] = {}
+            disc_payload["cmps"][unique_id]["name"] = clean_name
+            disc_payload["cmps"][unique_id]["unique_id"] = unique_id
+            disc_payload["cmps"][unique_id].update(dict({'enabled_by_default': 'true'}))
+
+            if item.unit:
+                disc_payload["cmps"][unique_id]["unit_of_measurement"] = item.unit
+
+                for key, value in unit_to_discovery.items():
+                    if str(item.unit).lower() == key:
+                        disc_payload["cmps"][unique_id].update(value)
+                        break
+
+            disc_payload["cmps"][unique_id].update(dict({'p': 'sensor'}))
+
+            if from_transport.write_enabled:
+                if item.write_mode == WriteMode.WRITE or WriteMode.WRITEONLY:
+                    #determine appropriate command topic
+                    for key, value in self._mqtt__write_topics.items():
+                        if value == item:
+                            disc_payload["cmps"][unique_id].update(dict({'command_topic': key}))
+                            
+                            if item.variable_name+"_codes" in from_transport.protocolSettings.codes:
+                                codes = from_transport.protocolSettings.codes[item.variable_name+"_codes"]
+                                disc_payload["cmps"][unique_id].update(dict({'options': list(codes.values()) }))
+                                disc_payload["cmps"][unique_id].update(dict({'p': 'select'}))
+                            else:
+                                #if the min/max is 0/1 then its probably a switch rather than a number entry
+                                if item.value_min == 0 and item.value_max == 1:
+                                    disc_payload["cmps"][unique_id].update(dict({'p': 'switch'}))
+                                    disc_payload["cmps"][unique_id].update(dict({'payload_on': 1}))
+                                    disc_payload["cmps"][unique_id].update(dict({'payload_off': 0}))
+                                #if there is only one value its probably a button rather than a number
+                                elif item.value_min == 1 and item.value_max == 1:
+                                    disc_payload["cmps"][unique_id].update(dict({'p': 'button'}))
+                                    disc_payload["cmps"][unique_id].update(dict({'payload_press': 1})) 
+                                else:
+                                    disc_payload["cmps"][unique_id].update(dict({'p': 'number'}))
+                                disc_payload["cmps"][unique_id].update(dict({'min': item.value_min * item.unit_mod}))
+                                disc_payload["cmps"][unique_id].update(dict({'max': item.value_max * item.unit_mod}))
+                            break
+
+            disc_payload["cmps"][unique_id].update(item.ha_disc)
 
             writePrefix = ""
             if from_transport.write_enabled and ( item.write_mode == WriteMode.WRITE or item.write_mode == WriteMode.WRITEONLY ):
                 writePrefix = "" #home assistant doesnt like write prefix
 
-            disc_payload["state_topic"] = self.base_topic + "/" +from_transport.device_identifier + writePrefix+ "/"+clean_name
+            disc_payload["cmps"][unique_id]["state_topic"] = self.base_topic + "/" + from_transport.device_identifier + writePrefix+ "/" + clean_name
 
-            if item.unit:
-                disc_payload["unit_of_measurement"] = item.unit
+            discovery_topic = self.discovery_topic+"/device/HN-" + from_transport.device_serial_number  + writePrefix + "/config"
 
-
-            discovery_topic = self.discovery_topic+"/sensor/HN-" + from_transport.device_serial_number  + writePrefix + "/" + disc_payload["name"].replace(" ", "_") + "/config"
-
-            self.client.publish(discovery_topic,
-                                       json.dumps(disc_payload),qos=1, retain=True)
-
-            #send WO message to indicate topic is write only
+            #add WO message to be sent later to indicate topic is write only
             if item.write_mode == WriteMode.WRITEONLY:
-                self.client.publish(disc_payload["state_topic"], "WRITEONLY")
+                write_only[disc_payload["cmps"][unique_id]["state_topic"]] = "WRITEONLY"
 
+            #break up items into batches to make the messages smaller (10 was arbitrarily picked but it seems to work well enough)
+            if len(disc_payload["cmps"]) > 10:
+                self.client.publish(discovery_topic, json.dumps(disc_payload),qos=1, retain=True)
+                #reset component list for next batch
+                disc_payload = copy.deepcopy(disc_payload_base)
+                time.sleep(0.07)
+        
+        #publish whatever is left
+        if len(disc_payload["cmps"]) > 0:
+            self.client.publish(discovery_topic, json.dumps(disc_payload),qos=1, retain=True)
+            time.sleep(0.07) #slow down for better reliability
+
+        for t, val in write_only.items():
+            self.client.publish(t, val)
             time.sleep(0.07) #slow down for better reliability
 
         self.client.publish(disc_payload["availability_topic"],"online",qos=0, retain=True)
