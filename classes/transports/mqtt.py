@@ -1,6 +1,7 @@
 import atexit
 import json
 import random
+import sys
 import time
 import warnings
 import copy
@@ -12,7 +13,7 @@ import paho.mqtt.properties
 from paho.mqtt.client import MQTT_ERR_NO_CONN
 from paho.mqtt.client import Client as MQTTClient
 
-from defs.common import project_details, strtobool
+from defs.common import strtobool, project_properties
 
 from ..protocol_settings import Registry_Type, WriteMode, registry_map_entry
 from .transport_base import transport_base
@@ -26,7 +27,7 @@ unit_to_discovery = {
     'w'     :   dict({'device_class':'power','state_class':'measurement','mdi':'power','enabled_by_default':True}),
     's'     :   dict({'device_class':'duration','state_class':'measurement','mdi':'timer','enabled_by_default':True}),
     'ms'    :   dict({'device_class':'duration','state_class':'measurement','mdi':'timer','enabled_by_default':True}),
-    '°c'     :   dict({'device_class':'temperature','state_class':'measurement','mdi':'thermometer','enabled_by_default':True}),
+    '°c'    :   dict({'device_class':'temperature','state_class':'measurement','mdi':'thermometer','enabled_by_default':True}),
     'hz'    :   dict({'device_class':'frequency','state_class':'measurement','enabled_by_default':True})
     }
 
@@ -231,11 +232,10 @@ class mqtt(transport_base):
         device["identifiers"] = "hotnoob_" + from_transport.device_model + "_" + from_transport.device_serial_number
         device["name"] = from_transport.device_name
 
-        data = project_details()
         origin = {}
-        origin["name"] = data['project']['name']
-        origin["sw"] = data['project']['version']
-        origin["url"] = data['project']['urls']['Homepage']
+        origin["name"] = project_properties['name']
+        origin["sw"] = project_properties['version']
+        origin["url"] = project_properties['url']
 
         registry_map : list[registry_map_entry] = []
         for entries in from_transport.protocolSettings.registry_map.values():
